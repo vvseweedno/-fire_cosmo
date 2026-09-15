@@ -1,0 +1,27 @@
+regions:
+  - name: siberia_core
+    bbox: [80.0, 50.0, 105.0, 62.0]
+    priority: high
+
+ingest:
+  firms_source: VIIRS
+  firms_interval_minutes: 30
+  cache_ttl_hours: 6
+
+detect:
+  min_brightness_viirs: 320
+  min_brightness_modis: 310
+  min_confidence: 0.4
+  min_frp: 5.0
+  tracking_radius_km: 3.0
+  event_decay_hours: 12
+  dedup_interval_hours: 6
+
+alert:
+  critical_distance_km: 10
+  warning_distance_km: 15
+  min_population_critical: 1000
+
+api:
+  host: 0.0.0.0
+  port: 8000
