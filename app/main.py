@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
-from app.api.routes import fires, events, report, health
+from app.api.routes import fires, events, report, health, prediction
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ app.include_router(health.router, prefix="/api/v1", tags=["Health"])
 app.include_router(fires.router, prefix="/api/v1", tags=["Fires"])
 app.include_router(events.router, prefix="/api/v1", tags=["Events"])
 app.include_router(report.router, prefix="/api/v1", tags=["Reports"])
+app.include_router(prediction.router, prefix="/api/v1", tags=["Prediction"])
 
 
 @app.get("/")

@@ -127,6 +127,22 @@ class FireCellularAutomata:
         self.wind_direction[:, :] = direction_rad
         logger.info(f"Wind set: {speed_ms} m/s at {direction_deg}°")
     
+    def set_ignition_point(self, row: int, col: int):
+        """
+        Установить точку возгорания
+        
+        Args:
+            row: Индекс строки
+            col: Индекс столбца
+        """
+        self.ignite_cell(row, col)
+        logger.debug(f"Ignition point set at ({row}, {col})")
+    
+    @property
+    def cell_size_m(self) -> float:
+        """Размер клетки в метрах"""
+        return self.config.cell_size_m
+    
     def set_obstacle(self, row_start: int, col_start: int,
                      row_end: int, col_end: int, obstacle_type: CellState):
         """
