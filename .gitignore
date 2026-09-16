@@ -1,9 +1,17 @@
 ```
-# Python
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Compiled and build artifacts
+*.o
+*.obj
+*.out
+*.so
+*.dll
+*.exe
 
 # Dependencies
 .venv/
@@ -15,12 +23,19 @@ venv/
 # Logs and temp files
 *.log
 *.tmp
+*.swp
 
 # Editors
 .vscode/
 .idea/
 
-# Build artifacts
-build/
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Distribution / packaging
 dist/
+build/
+*.egg-info/
 ```
