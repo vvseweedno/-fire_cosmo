@@ -1,0 +1,40 @@
+```gitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyc.*
+.Python
+env/
+venv/
+.venv/
+.ENV
+.env
+.env.local
+.env.*
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+```

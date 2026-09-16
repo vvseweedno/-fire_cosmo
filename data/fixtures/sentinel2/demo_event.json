@@ -1,0 +1,63 @@
+{
+  "event_id": "demo_fire_001",
+  "type": "Feature",
+  "properties": {
+    "source": "demo_fixture",
+    "description": "\u0421\u0438\u043d\u0442\u0435\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0435 \u043f\u043e\u0436\u0430\u0440\u043d\u043e\u0435 \u0441\u043e\u0431\u044b\u0442\u0438\u0435 \u0434\u043b\u044f \u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u0438",
+    "region": "Siberia Demo Region",
+    "center": [
+      92.0,
+      56.0
+    ],
+    "pre_scene": {
+      "scene_id": "S2A_MSIL2A_20260601_T000000_N0000_R000_T00XXX",
+      "datetime": "2026-06-01T00:00:00Z",
+      "cloud_cover": 5.2,
+      "days_before_fire": 45
+    },
+    "post_scene": {
+      "scene_id": "S2A_MSIL2A_20260720_T000000_N0000_R000_T00XXX",
+      "datetime": "2026-07-20T00:00:00Z",
+      "cloud_cover": 8.7,
+      "days_after_fire": 5
+    },
+    "expected_burned_area_ha": {
+      "min": 50,
+      "max": 500,
+      "estimate": 180
+    },
+    "severity_distribution": {
+      "high": 0.25,
+      "moderate": 0.45,
+      "low": 0.2,
+      "unburned": 0.1
+    }
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          91.9,
+          55.9
+        ],
+        [
+          92.1,
+          55.9
+        ],
+        [
+          92.1,
+          56.1
+        ],
+        [
+          91.9,
+          56.1
+        ],
+        [
+          91.9,
+          55.9
+        ]
+      ]
+    ]
+  }
+}

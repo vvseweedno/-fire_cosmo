@@ -1,0 +1,51 @@
+# Docker Compose for Wildfire Nexus Core
+# Quick start: docker compose up --build
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wildfire-nexus-core
+    ports:
+      - "8000:8000"
+    environment:
+      # Application settings
+      - APP_ENV=${APP_ENV:-production}
+      - HOST=0.0.0.0
+      - PORT=8000
+      # Offline mode for demo (set to false for production with real API keys)
+      - OFFLINE_MODE=${OFFLINE_MODE:-true}
+      # Data directories
+      - DATA_DIR=/app/data
+      - CACHE_DIR=/app/data/cache
+      - OUTPUT_DIR=/app/data/outputs
+      # API Keys (optional, not needed in offline mode)
+      - EARTHDATA_TOKEN=${EARTHDATA_TOKEN:-}
+      - FIRMS_API_KEY=${FIRMS_API_KEY:-}
+      # STAC API endpoint
+      - SENTINEL2_STAC_API=${SENTINEL2_STAC_API:-https://earth-search.aws.element84.com/v1}
+      # Detection thresholds
+      - DEFAULT_MIN_CONFIDENCE=${DEFAULT_MIN_CONFIDENCE:-nominal}
+      - MAX_CLOUD_COVER=${MAX_CLOUD_COVER:-20}
+      - PRE_IMAGE_DAYS_BEFORE=${PRE_IMAGE_DAYS_BEFORE:-90}
+      - POST_IMAGE_DAYS_AFTER=${POST_IMAGE_DAYS_AFTER:-30}
+      - MIN_FIRE_POINT_CLUSTER_SIZE=${MIN_FIRE_POINT_CLUSTER_SIZE:-2}
+    volumes:
+      # Persist data and outputs
+      - ./data:/app/data
+      # Mount .env for runtime configuration
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - wildfire-network
+
+networks:
+  wildfire-network:
+    driver: bridge

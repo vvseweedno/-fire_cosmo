@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wildfire Nexus Core - Мониторинг лесных пожаров</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; }
+        
+        #map { height: 100vh; width: 100%; }
+        
+        .controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            max-width: 300px;
+        }
+        
+        .controls h3 { margin-bottom: 10px; font-size: 16px; }
+        
+        .control-group { margin-bottom: 10px; }
+        .control-group label { display: block; font-size: 12px; margin-bottom: 5px; color: #666; }
+        .control-group input, .control-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover { background: #d32f2f; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            border-radius: 3px;
+        }
+        
+        .status-bar {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            font-size: 12px;
+        }
+        
+        .loading { opacity: 0.5; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="controls">
+        <h3>🔍 Поиск пожаров</h3>
+        
+        <div class="control-group">
+            <label>BBOX (min_lon, min_lat, max_lon, max_lat)</label>
+            <input type="text" id="bbox" value="-125.0,37.0,-120.0,40.0" />
+        </div>
+        
+        <div class="control-group">
+            <label>Дата начала</label>
+            <input type="date" id="start_date" value="2024-01-01" />
+        </div>
+        
+        <div class="control-group">
+            <label>Дата конца</label>
+            <input type="date" id="end_date" value="2024-01-31" />
+        </div>
+        
+        <div class="control-group">
+            <label>Сенсор</label>
+            <select id="sensor">
+                <option value="">Все</option>
+                <option value="MODIS">MODIS</option>
+                <option value="VIIRS">VIIRS</option>
+            </select>
+        </div>
+        
+        <button id="analyzeBtn" onclick="analyzeRegion()">🛰 Анализировать</button>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff0000;"></div>
+            <span>Высокая степень поражения</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff8800;"></div>
+            <span>Средняя степень</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ffcc00;"></div>
+            <span>Низкая степень</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: #ff6b6b; border-radius: 50%;"></div>
+            <span>Активные очаги</span>
+        </div>
+    </div>
+    
+    <div class="status-bar" id="statusBar">
+        Статус: Готов к работе
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Инициализация карты
+        const map = L.map('map').setView([38.5, -122.5], 8);
+        
+        // Базовая подложка
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        
+        // Слои
+        const firePointsLayer = L.layerGroup().addTo(map);
+        const burnedAreaLayer = L.layerGroup().addTo(map);
+        
+        let currentEvents = [];
+        
+        function updateStatus(message) {
+            document.getElementById('statusBar').textContent = 'Статус: ' + message;
+        }
+        
+        async function analyzeRegion() {
+            const btn = document.getElementById('analyzeBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Анализ...';
+            
+            const bbox = document.getElementById('bbox').value;
+            const startDate = document.getElementById('start_date').value;
+            const endDate = document.getElementById('end_date').value;
+            const sensor = document.getElementById('sensor').value;
+            
+            try {
+                updateStatus('Загрузка данных о пожарах...');
+                
+                // Запрос к API
+                const url = `/api/v1/fires?bbox=${encodeURIComponent(bbox)}&start_date=${startDate}&end_date=${endDate}${sensor ? '&sensor=' + sensor : ''}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                // Очистка слоев
+                firePointsLayer.clearLayers();
+                burnedAreaLayer.clearLayers();
+                
+                // Отображение точек пожаров
+                if (data.features && data.features.length > 0) {
+                    data.features.forEach(feature => {
+                        const [lon, lat] = feature.geometry.coordinates;
+                        const props = feature.properties;
+                        
+                        // Маркер очага
+                        const marker = L.circleMarker([lat, lon], {
+                            radius: 6,
+                            fillColor: '#ff6b6b',
+                            color: '#fff',
+                            weight: 2,
+                            fillOpacity: 0.8
+                        });
+                        
+                        marker.bindPopup(`
+                            <strong>${props.sensor}</strong><br>
+                            Дата: ${new Date(props.datetime).toLocaleString()}<br>
+                            Температура: ${props.brightness_temp_k} K<br>
+                            FRP: ${props.frp_mw || 'N/A'} MW<br>
+                            Уверенность: ${props.confidence}
+                        `);
+                        
+                        marker.addTo(firePointsLayer);
+                    });
+                    
+                    updateStatus(`Найдено ${data.total} очагов`);
+                } else {
+                    updateStatus('Очагов не найдено');
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                updateStatus('Ошибка: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🛰 Анализировать';
+            }
+        }
+        
+        // Загрузка событий при старте
+        async function loadEvents() {
+            try {
+                const response = await fetch('/api/v1/events');
+                const data = await response.json();
+                
+                if (data.events && data.events.length > 0) {
+                    currentEvents = data.events;
+                    updateStatus(`Загружено ${data.total} событий`);
+                }
+            } catch (error) {
+                console.error('Error loading events:', error);
+            }
+        }
+        
+        loadEvents();
+    </script>
+</body>
+</html>

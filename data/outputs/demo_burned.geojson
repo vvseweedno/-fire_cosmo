@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "event_id": "demo_fire_001",
+        "severity": "moderate_severity",
+        "area_ha": 180.5,
+        "source": "demo_fixture"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              91.99,
+              55.99
+            ],
+            [
+              92.01,
+              55.99
+            ],
+            [
+              92.01,
+              56.01
+            ],
+            [
+              91.99,
+              56.01
+            ],
+            [
+              91.99,
+              55.99
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

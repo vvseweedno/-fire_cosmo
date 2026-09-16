@@ -1,0 +1,82 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "name": "Burned Area Labels - Demo Fixture",
+    "version": "1.0.0",
+    "description": "Эталонные полигоны гари для оценки качества картирования",
+    "created": "2026-09-15",
+    "source": "demo_fixture",
+    "note": "Данные являются синтетическими и предназначены только для тестирования"
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "burn_001",
+      "properties": {
+        "event_id": "evt_demo_001",
+        "area_ha": 185.4,
+        "severity_class": "moderate_severity",
+        "confidence": 0.87,
+        "pre_scene_date": "2026-08-15",
+        "post_scene_date": "2026-09-10",
+        "cloud_cover_percent": 12
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [92.85, 56.00],
+          [92.90, 56.00],
+          [92.90, 56.04],
+          [92.85, 56.04],
+          [92.85, 56.00]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "burn_002",
+      "properties": {
+        "event_id": "evt_demo_002",
+        "area_ha": 312.7,
+        "severity_class": "high_severity",
+        "confidence": 0.92,
+        "pre_scene_date": "2026-08-10",
+        "post_scene_date": "2026-09-05",
+        "cloud_cover_percent": 8
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [93.10, 55.88],
+          [93.18, 55.88],
+          [93.18, 55.92],
+          [93.10, 55.92],
+          [93.10, 55.88]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "burn_003",
+      "properties": {
+        "event_id": "evt_demo_003",
+        "area_ha": 98.2,
+        "severity_class": "low_severity",
+        "confidence": 0.79,
+        "pre_scene_date": "2026-08-20",
+        "post_scene_date": "2026-09-12",
+        "cloud_cover_percent": 18
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [91.55, 57.22],
+          [91.59, 57.22],
+          [91.59, 57.25],
+          [91.55, 57.25],
+          [91.55, 57.22]
+        ]]
+      }
+    }
+  ]
+}

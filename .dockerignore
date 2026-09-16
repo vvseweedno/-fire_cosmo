@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+.eggs/
+*.egg-info/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# Build
+dist/
+build/
+*.manifest
+*.spec
+
+# Logs
+*.log
+logs/
+
+# Data (keep fixtures, exclude cache and large outputs)
+data/cache/*
+!data/cache/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker
+.dockerignore
+
+# Documentation
+*.md~
+*.rst~
+
+# OS
+.DS_Store
+Thumbs.db
