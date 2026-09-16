@@ -1,0 +1,59 @@
+# App Core Configuration
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+from enum import Enum
+
+
+class ConfidenceLevel(str, Enum):
+    LOW = "low"
+    NOMINAL = "nominal"
+    HIGH = "high"
+
+
+class Settings(BaseSettings):
+    """Настройки приложения"""
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"
+    )
+    
+    # App
+    app_env: str = "development"
+    host: str = "0.0.0.0"
+    port: int = 8000
+    offline_mode: bool = False
+    
+    # Data Directories
+    data_dir: str = "./data"
+    cache_dir: str = "./data/cache"
+    output_dir: str = "./data/outputs"
+    
+    # API Keys
+    firms_map_key: Optional[str] = None
+    earthdata_token: Optional[str] = None
+    sentinel2_stac_api: str = "https://earth-search.aws.element84.com/v1"
+    
+    # Detection Thresholds
+    default_min_confidence: ConfidenceLevel = ConfidenceLevel.NOMINAL
+    max_cloud_cover: float = 20.0
+    pre_image_days_before: int = 90
+    post_image_days_after: int = 30
+    min_fire_point_cluster_size: int = 2
+    
+    # Database
+    database_url: str = "sqlite+aiosqlite:///./data/wildfire.db"
+    
+    # Severity Thresholds (dNBR)
+    severity_unburned_max: float = 0.10
+    severity_low_max: float = 0.27
+    severity_moderate_max: float = 0.44
+    
+    @property
+    def is_production(self) -> bool:
+        return self.app_env == "production"
+
+
+settings = Settings()
