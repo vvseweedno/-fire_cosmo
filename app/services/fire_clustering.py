@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from shapely.geometry import Point
-from shapely.strtree import STRTree
+from shapely.strtree import STRtree as STRTree
 import numpy as np
 
 from app.core.schemas import FireCandidate, FireEvent, FireStatus

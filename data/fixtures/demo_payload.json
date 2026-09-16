@@ -1,0 +1,16 @@
+{
+  "bbox": [
+    91.8,
+    55.8,
+    92.2,
+    56.2
+  ],
+  "start_date": "2026-07-01",
+  "end_date": "2026-07-31",
+  "sensors": [
+    "MODIS",
+    "VIIRS"
+  ],
+  "min_confidence": "nominal",
+  "mode": "demo_fixture"
+}

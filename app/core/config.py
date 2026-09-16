@@ -2,6 +2,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 from enum import Enum
+from pathlib import Path
 
 
 class ConfidenceLevel(str, Enum):
@@ -30,6 +31,7 @@ class Settings(BaseSettings):
     data_dir: str = "./data"
     cache_dir: str = "./data/cache"
     output_dir: str = "./data/outputs"
+    fixtures_dir: str = "./data/fixtures"
     
     # API Keys
     firms_map_key: Optional[str] = None
@@ -54,6 +56,15 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+    
+    def get_fixtures_path(self) -> Path:
+        """Получить путь к директории фикстур"""
+        return Path(self.fixtures_dir)
+    
+    def ensure_dirs_exist(self):
+        """Создать необходимые директории"""
+        for dir_path in [self.data_dir, self.cache_dir, self.output_dir, self.fixtures_dir]:
+            Path(dir_path).mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

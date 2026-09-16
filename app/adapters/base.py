@@ -2,6 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
 
 from app.core.schemas import FireCandidate
 
@@ -9,9 +10,10 @@ from app.core.schemas import FireCandidate
 class BaseFireAdapter(ABC):
     """Базовый класс адаптера для источников данных о пожарах"""
     
-    def __init__(self, cache_dir: str = "./data/cache", offline_mode: bool = False):
+    def __init__(self, cache_dir: str = "./data/cache", offline_mode: bool = False, fixtures_dir: str = "./data/fixtures"):
         self.cache_dir = cache_dir
         self.offline_mode = offline_mode
+        self.fixtures_dir = Path(fixtures_dir)
     
     @abstractmethod
     async def fetch_fire_points(
@@ -50,3 +52,11 @@ class BaseFireAdapter(ABC):
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"{self.get_sensor_type()} adapter error: {message} - {error}")
+    
+    def _get_fixture_path(self, filename: str) -> Path:
+        """Получить путь к фикстуре"""
+        return self.fixtures_dir / "fires" / filename
+    
+    def _check_fixture_exists(self, filename: str) -> bool:
+        """Проверить существование фикстуры"""
+        return self._get_fixture_path(filename).exists()

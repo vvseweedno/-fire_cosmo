@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-09-16T10:58:33.619430",
+  "mode": "demo_fixture",
+  "detection": {
+    "total_points": 40,
+    "valid_points": 40,
+    "false_positives": 0,
+    "events": 7,
+    "event_details": [
+      
