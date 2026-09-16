@@ -77,23 +77,47 @@ class FireClusteringService:
             await self._create_new_event(point)
     
     async def _find_nearby_events(self, lat: float, lon: float) -> List[FireEvent]:
-        """Найти события в радиусе"""
-        nearby = []
+        """Найти события в радиусе с использованием STRTree"""
+        if not self.events:
+            return []
         
-        for event in self.events.values():
+        # Построить spatial index (один раз)
+        if self._event_tree is None:
+            self._rebuild_event_tree()
+        
+        # Найти кандидатов в bounding box
+        point = Point(lon, lat)
+        bbox = point.buffer(self.spatial_radius_km / 111)  # ~1 km ≈ 0.009 degrees
+        candidates = self._event_tree.query(bbox)
+        
+        # Проверить точное расстояние
+        nearby = []
+        for idx in candidates:
+            event_id = self._event_index[idx]
+            event = self.events[event_id]
             if event.status != FireStatus.ACTIVE:
                 continue
             
-            # Haversine distance
             distance = self._haversine_distance(
-                lat, lon, 
+                lat, lon,
                 event.centroid_lat, event.centroid_lon
             )
-            
             if distance <= self.spatial_radius_km:
                 nearby.append(event)
         
         return nearby
+    
+    def _rebuild_event_tree(self):
+        """Перестроить пространственный индекс"""
+        if not self.events:
+            return
+        
+        geometries = [
+            Point(e.centroid_lon, e.centroid_lat)
+            for e in self.events.values()
+        ]
+        self._event_tree = STRTree(geometries)
+        self._event_index = {i: eid for i, eid in enumerate(self.events.keys())}
     
     async def _update_event_with_point(self, event: FireEvent, point: FireCandidate):
         """Обновить событие новой точкой"""
@@ -111,6 +135,9 @@ class FireClusteringService:
         # Добавление сенсора
         if point.sensor not in event.sensors:
             event.sensors.append(point.sensor)
+        
+        # Инвалидировать spatial index
+        self._event_tree = None
         
         logger.debug(f"Updated event {event.id} with point {point.id}")
     
