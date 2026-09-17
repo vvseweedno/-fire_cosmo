@@ -1,25 +1,19 @@
 # Events API routes
 from fastapi import APIRouter, HTTPException
-from typing import List, Optional
 
-from app.core.schemas import FireEvent, BurnedAreaResult, EventReport
+from app.core.schemas import EventReport
 
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
 
-# Глобальное хранилище событий (в реальности - БД)
-_events_store: dict = {}
-
-
 @router.get("")
 async def list_events():
-    """Получить список всех пожарных событий"""
+    """Получить список всех пожарных событий."""
     from app.api.routes.fires import get_services
 
     _, _, clustering, _ = get_services()
     events = clustering.get_all_events()
-    
     return {
         "events": [
             {
@@ -31,25 +25,24 @@ async def list_events():
                 "status": e.status.value,
                 "point_count": e.point_count,
                 "area_ha": e.area_ha,
-                "severity": e.severity.value if e.severity else None
+                "severity": e.severity.value if e.severity else None,
             }
             for e in events
         ],
-        "total": len(events)
+        "total": len(events),
     }
 
 
 @router.get("/{event_id}")
 async def get_event(event_id: str):
-    """Получить детали события по ID"""
-    from app.api.routes.fires import get_services
+    """Получить детали события по ID."""
+    from app.api.routes.fires import get_services, _provenance_store
 
     _, _, clustering, _ = get_services()
     event = clustering.get_event_by_id(event_id)
-    
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
+
     return {
         "event_id": event.id,
         "first_seen": event.first_seen.isoformat(),
@@ -63,7 +56,10 @@ async def get_event(event_id: str):
                 "latitude": p.latitude,
                 "longitude": p.longitude,
                 "brightness_temp_k": p.brightness_temp_k,
-                "confidence": p.confidence.value
+                "confidence": p.confidence.value,
+                "filters_passed": p.filters_passed,
+                "filters_failed": p.filters_failed,
+                "reason": p.reason,
             }
             for p in event.fire_points
         ],
@@ -72,13 +68,14 @@ async def get_event(event_id: str):
         "point_count": event.point_count,
         "max_frp": event.max_frp,
         "area_ha": event.area_ha,
-        "severity": event.severity.value if event.severity else None
+        "severity": event.severity.value if event.severity else None,
+        "provenance": _provenance_store.get(event_id),
     }
 
 
 @router.get("/{event_id}/burned.geojson")
 async def get_burned_area(event_id: str):
-    """Получить GeoJSON полигонов гари для события"""
+    """Получить GeoJSON полигонов гари для события."""
     from app.api.routes.fires import _burned_area_store, get_services
 
     _, _, clustering, _ = get_services()
@@ -91,46 +88,51 @@ async def get_burned_area(event_id: str):
 
 @router.get("/{event_id}/report")
 async def get_event_report(event_id: str):
-    """Получить полный отчет о событии"""
+    """Получить воспроизводимый отчет: никаких вымышленных scene IDs."""
     from app.core.schemas import Sentinel2Scene, SeveritySummary
-    from app.api.routes.fires import _report_store, get_services
+    from app.api.routes.fires import _report_store, _provenance_store, get_services
 
     _, _, clustering, _ = get_services()
     event = clustering.get_event_by_id(event_id)
-    
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
+
     burned_area = _report_store.get(event_id)
     if burned_area is None:
         raise HTTPException(status_code=404, detail="Burned area has not been mapped yet")
 
-    severity_summary = burned_area.severity_summary or SeveritySummary()
+    provenance = _provenance_store.get(event_id, {})
+    pre_payload = provenance.get("pre_scene")
+    post_payload = provenance.get("post_scene")
+    pre_scene = Sentinel2Scene(**pre_payload) if pre_payload else None
+    post_scene = Sentinel2Scene(**post_payload) if post_payload else None
+    is_fixture = provenance.get("mode") == "offline_fixture"
+
+    limitations = []
+    warnings = []
+    if is_fixture:
+        limitations.append("Offline demo uses a local dNBR fixture; scene provenance is intentionally absent.")
+        warnings.append("Fixture output must not be presented as a real Sentinel-2 observation.")
+    else:
+        if not provenance.get("cloud_mask"):
+            limitations.append("Cloud-mask provenance is unavailable.")
+        if pre_scene is None or post_scene is None:
+            warnings.append("Sentinel-2 scene provenance is incomplete.")
 
     report = EventReport(
         event_id=event_id,
-        region_bbox=None,
+        region_bbox=provenance.get("analysis_bounds_wgs84"),
         first_seen=event.first_seen,
         last_seen=event.last_seen,
         sources=event.sensors,
-        sentinel2_pre=Sentinel2Scene(
-            scene_id="S2A_MSIL2A_20240101T000000_N0400_T10SEG_20240101T000000",
-            datetime=event.first_seen,
-            cloud_cover=5.2
-        ) if event.fire_points else None,
-        sentinel2_post=Sentinel2Scene(
-            scene_id="S2B_MSIL2A_20240115T000000_N0400_T10SEG_20240115T000000",
-            datetime=event.last_seen,
-            cloud_cover=8.7
-        ) if event.fire_points else None,
+        sentinel2_pre=pre_scene,
+        sentinel2_post=post_scene,
         burned_area=burned_area,
-        severity_summary=severity_summary,
-        confidence="medium" if burned_area.uncertainty == "demo_fixture" else "high",
-        warnings=[],
-        limitations=[
-            "Демо-режим использует локальную dNBR-фикстуру вместо скачанного Sentinel-2 raster pair",
-            "Для финальной защиты подключите реальные Sentinel-2 L2A сцены и сохраните их идентификаторы"
-        ]
+        severity_summary=burned_area.severity_summary or SeveritySummary(),
+        confidence="medium" if is_fixture else "high",
+        warnings=warnings,
+        limitations=limitations,
     )
-    
-    return report.model_dump(mode='json')
+    payload = report.model_dump(mode="json")
+    payload["processing_provenance"] = provenance
+    return payload
