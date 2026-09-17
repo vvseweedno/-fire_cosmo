@@ -9,7 +9,6 @@ router = APIRouter(prefix="/events", tags=["Events"])
 
 @router.get("")
 async def list_events():
-    """Получить список всех пожарных событий."""
     from app.api.routes.fires import get_services
 
     _, _, clustering, _ = get_services()
@@ -35,8 +34,7 @@ async def list_events():
 
 @router.get("/{event_id}")
 async def get_event(event_id: str):
-    """Получить детали события по ID."""
-    from app.api.routes.fires import get_services, _provenance_store
+    from app.api.routes.fires import _provenance_store, get_services
 
     _, _, clustering, _ = get_services()
     event = clustering.get_event_by_id(event_id)
@@ -51,11 +49,13 @@ async def get_event(event_id: str):
         "fire_points": [
             {
                 "id": p.id,
+                "source": p.source,
                 "sensor": p.sensor,
                 "datetime": p.datetime.isoformat(),
                 "latitude": p.latitude,
                 "longitude": p.longitude,
                 "brightness_temp_k": p.brightness_temp_k,
+                "frp_mw": p.frp_mw,
                 "confidence": p.confidence.value,
                 "filters_passed": p.filters_passed,
                 "filters_failed": p.filters_failed,
@@ -75,7 +75,6 @@ async def get_event(event_id: str):
 
 @router.get("/{event_id}/burned.geojson")
 async def get_burned_area(event_id: str):
-    """Получить GeoJSON полигонов гари для события."""
     from app.api.routes.fires import _burned_area_store, get_services
 
     _, _, clustering, _ = get_services()
@@ -88,9 +87,9 @@ async def get_burned_area(event_id: str):
 
 @router.get("/{event_id}/report")
 async def get_event_report(event_id: str):
-    """Получить воспроизводимый отчет: никаких вымышленных scene IDs."""
+    """Return a reproducible report without fabricated scene metadata."""
+    from app.api.routes.fires import _provenance_store, _report_store, get_services
     from app.core.schemas import Sentinel2Scene, SeveritySummary
-    from app.api.routes.fires import _report_store, _provenance_store, get_services
 
     _, _, clustering, _ = get_services()
     event = clustering.get_event_by_id(event_id)
@@ -108,16 +107,26 @@ async def get_event_report(event_id: str):
     post_scene = Sentinel2Scene(**post_payload) if post_payload else None
     is_fixture = provenance.get("mode") == "offline_fixture"
 
-    limitations = []
+    limitations = [
+        "Burn severity thresholds are configurable heuristics and require validation for the target ecosystem.",
+        "Forest-only affected area is not claimed until a validated forest/land-cover mask is connected.",
+    ]
     warnings = []
+    confidence = "medium"
+
     if is_fixture:
-        limitations.append("Offline demo uses a local dNBR fixture; scene provenance is intentionally absent.")
+        confidence = "demo_fixture"
+        limitations.append("Offline demo uses a local dNBR fixture; real scene provenance is intentionally absent.")
         warnings.append("Fixture output must not be presented as a real Sentinel-2 observation.")
     else:
-        if not provenance.get("cloud_mask"):
-            limitations.append("Cloud-mask provenance is unavailable.")
+        if not provenance.get("cloud_surface_mask"):
+            limitations.append("SCL/cloud/surface-mask provenance is unavailable.")
         if pre_scene is None or post_scene is None:
             warnings.append("Sentinel-2 scene provenance is incomplete.")
+        if pre_scene and post_scene and ("SCL" not in pre_scene.assets or "SCL" not in post_scene.assets):
+            warnings.append("One or both scenes lack SCL; cloud/surface masking is incomplete.")
+        if not (pre_scene and post_scene):
+            confidence = "low"
 
     report = EventReport(
         event_id=event_id,
@@ -129,7 +138,7 @@ async def get_event_report(event_id: str):
         sentinel2_post=post_scene,
         burned_area=burned_area,
         severity_summary=burned_area.severity_summary or SeveritySummary(),
-        confidence="medium" if is_fixture else "high",
+        confidence=confidence,
         warnings=warnings,
         limitations=limitations,
     )
