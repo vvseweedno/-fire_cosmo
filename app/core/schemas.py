@@ -1,8 +1,9 @@
 # Pydantic schemas for API request/response
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConfidenceLevel(str, Enum):
@@ -29,9 +30,11 @@ class SeverityLevel(str, Enum):
 # === Fire Detection Schemas ===
 
 class FireCandidate(BaseModel):
-    """Кандидат в очаги пожара (нормализованная точка)"""
+    """Нормализованный кандидат термической аномалии."""
+
     id: str
-    sensor: str  # MODIS | VIIRS | LANDSAT
+    sensor: str  # MODIS | VIIRS | LANDSAT (LANDSAT experimental unless explicitly enabled)
+    source: Optional[str] = None
     datetime: datetime
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
@@ -42,7 +45,6 @@ class FireCandidate(BaseModel):
     satellite: Optional[str] = None
     raw: Dict[str, Any] = Field(default_factory=dict)
 
-    # Validation flags
     is_valid: bool = True
     false_positive_score: float = 0.0
     filters_passed: List[str] = Field(default_factory=list)
@@ -52,6 +54,7 @@ class FireCandidate(BaseModel):
 
 class FireEventCreate(BaseModel):
     """Создание пожарного события"""
+
     event_id: Optional[str] = None
     first_seen: datetime
     last_seen: datetime
@@ -65,20 +68,21 @@ class FireEventCreate(BaseModel):
 
 class FireEvent(FireEventCreate):
     """Пожарное событие с полной информацией"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     fire_points: List[FireCandidate] = Field(default_factory=list)
     area_ha: Optional[float] = None
     severity: Optional[SeverityLevel] = None
     burned_area_geojson: Optional[Dict[str, Any]] = None
 
-    class Config:
-        from_attributes = True
-
 
 # === Burned Area Schemas ===
 
 class Sentinel2Scene(BaseModel):
     """Sentinel-2 L2A scene plus enough STAC provenance to reproduce analysis."""
+
     scene_id: str
     datetime: datetime
     cloud_cover: float
@@ -91,6 +95,7 @@ class Sentinel2Scene(BaseModel):
 
 class BurnedAreaSelection(BaseModel):
     """Результат подбора снимков для анализа гари"""
+
     event_id: str
     pre_scene_id: Optional[str] = None
     post_scene_id: Optional[str] = None
@@ -98,11 +103,12 @@ class BurnedAreaSelection(BaseModel):
     post_datetime: Optional[datetime] = None
     cloud_cover_pre: Optional[float] = None
     cloud_cover_post: Optional[float] = None
-    confidence: str = "high"  # high | medium | low
+    confidence: str = "high"
 
 
 class SeveritySummary(BaseModel):
     """Статистика по степеням поражения"""
+
     unburned_ha: float = 0.0
     low_severity_ha: float = 0.0
     moderate_severity_ha: float = 0.0
@@ -112,12 +118,13 @@ class SeveritySummary(BaseModel):
 
 class BurnedAreaResult(BaseModel):
     """Результат расчета площади гари"""
+
     event_id: str
     area_ha: float
     area_m2: float
     projection_used: str
-    method: str  # polygon_area | raster_pixel_count
-    uncertainty: str = "medium"  # low | medium | high
+    method: str
+    uncertainty: str = "medium"
     severity_summary: Optional[SeveritySummary] = None
 
 
@@ -125,6 +132,7 @@ class BurnedAreaResult(BaseModel):
 
 class EventReport(BaseModel):
     """Полный отчет о событии"""
+
     event_id: str
     region_bbox: Optional[List[float]] = None
     first_seen: datetime
@@ -143,15 +151,18 @@ class EventReport(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     """Запрос на анализ региона"""
-    bbox: List[float] = Field(min_length=4, max_length=4)  # [min_lon, min_lat, max_lon, max_lat]
+
+    bbox: List[float] = Field(min_length=4, max_length=4)
     start_date: str
     end_date: str
-    sensors: List[str] = ["MODIS", "VIIRS", "LANDSAT"]
+    # Landsat is intentionally opt-in until a real thermal-pixel path is implemented.
+    sensors: List[str] = Field(default_factory=lambda: ["MODIS", "VIIRS"])
     min_confidence: ConfidenceLevel = ConfidenceLevel.NOMINAL
 
 
 class AnalyzeResponse(BaseModel):
     """Ответ на запрос анализа"""
+
     job_id: str
     status: str = "queued"
     message: Optional[str] = None
@@ -159,6 +170,7 @@ class AnalyzeResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Статус сервиса"""
+
     status: str = "ok"
     service: str = "fire-burned-area-service"
     version: str = "1.0.0"
