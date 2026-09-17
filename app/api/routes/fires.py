@@ -1,10 +1,10 @@
 # Fires API routes
 import asyncio
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException
 
-from app.core.schemas import FireCandidate, AnalyzeRequest
+from app.core.schemas import AnalyzeRequest
 from app.services.fire_detection import FireDetectionService
 from app.services.false_positive_filter import FalsePositiveFilter
 from app.services.fire_clustering import FireClusteringService
@@ -52,7 +52,7 @@ async def list_fires(
     sensor: Optional[str] = Query(None, description="Sensor type: MODIS, VIIRS"),
     min_confidence: str = Query("nominal", description="Minimum confidence level"),
 ):
-    """Получить GeoJSON термических аномалий."""
+    """Получить GeoJSON термических аномалий и аудит фильтрации."""
     try:
         bbox_coords = [float(x) for x in bbox.split(",")]
         if len(bbox_coords) != 4:
@@ -79,9 +79,15 @@ async def list_fires(
                     "frp_mw": point.frp_mw,
                     "confidence": point.confidence.value,
                     "daynight": point.daynight,
+                    "filters_passed": point.filters_passed,
                 },
             })
-    return {"type": "FeatureCollection", "features": features, "total": len(features)}
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "total": len(features),
+        "filter_audit": filter_service.audit_summary(),
+    }
 
 
 async def _map_event(event, burned_area_mapper, request_bbox):
@@ -144,6 +150,7 @@ async def analyze_region(request: AnalyzeRequest):
         request.bbox, request.start_date, request.end_date, request.sensors
     )
     filtered_points = await filter_service.filter_points(points)
+    filter_audit = filter_service.audit_summary()
     events = await clustering_service.cluster_points(filtered_points)
 
     event_summaries = []
@@ -203,6 +210,7 @@ async def analyze_region(request: AnalyzeRequest):
         "events_mapped": mapped_count,
         "fire_points_found": len(points),
         "fire_points_after_filter": len(filtered_points),
+        "filter_audit": filter_audit,
         "events": event_summaries,
         "message": f"Found {len(filtered_points)} filtered fire points; mapped {mapped_count}/{len(events)} events",
     }
