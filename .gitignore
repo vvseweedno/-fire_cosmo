@@ -1,16 +1,21 @@
 ```
-# Python cache files
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py~
+*.py.class
+.Python
+*.so
+*.egg-info/
+.eggs/
 
-# Test coverage and cache
-.pytest_cache/
+# Coverage
 .coverage
 coverage/
 htmlcov/
 
-# Logs
-*.log
+# Data outputs
+data/outputs/
 ```

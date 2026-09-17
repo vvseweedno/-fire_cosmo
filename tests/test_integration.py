@@ -9,7 +9,7 @@ from app.services.fire_clustering import FireClusteringService
 async def test_full_pipeline_offline():
     """Тест полного цикла в offline режиме"""
     # 1. Детекция
-    detection = FireDetectionService(offline_mode=True)
+    detection = FireDetectionService.create_default(offline_mode=True)
     points = await detection.detect_fires(
         bbox=[-122.5, 37.7, -122.3, 37.9],
         start_date="2024-01-01",
@@ -33,7 +33,7 @@ async def test_full_pipeline_offline():
 @pytest.mark.asyncio
 async def test_edge_case_empty_bbox():
     """Тест пустого bbox"""
-    detection = FireDetectionService(offline_mode=True)
+    detection = FireDetectionService.create_default(offline_mode=True)
     points = await detection.detect_fires(
         bbox=[0, 0, 0, 0],
         start_date="2024-01-01",
@@ -60,7 +60,8 @@ async def test_clustering_strtree():
             datetime=datetime.utcnow(),
             confidence=ConfidenceLevel.NOMINAL,
             brightness_temp_k=350.0,
-            frp_mw=10.0
+            frp_mw=10.0,
+            daynight="D"
         )
         for i in range(5)
     ]

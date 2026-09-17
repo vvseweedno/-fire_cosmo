@@ -109,7 +109,7 @@ async def run_detection() -> Dict[str, Any]:
         "valid_points": len(filtered_points),
         "false_positives": false_positives,
         "events": len(events),
-        "event_details": len(events)
+        "event_details": events  # Возвращаем список событий, а не их количество
     }
 
 
@@ -201,10 +201,26 @@ def save_results(detection_result: Dict, burned_result: Dict):
             json.dump(burned_geojson, f, indent=2)
     
     # Report JSON
+    # Преобразуем event_details в JSON-сериализуемый формат
+    event_details_serializable = []
+    for evt in detection_result.get("event_details", []):
+        if hasattr(evt, 'model_dump'):  # Pydantic модель
+            event_details_serializable.append(evt.model_dump())
+        elif isinstance(evt, dict):
+            event_details_serializable.append(evt)
+        else:
+            event_details_serializable.append({"id": str(evt)})
+    
     report = {
         "generated_at": datetime.now().isoformat(),
         "mode": "demo_fixture",
-        "detection": detection_result,
+        "detection": {
+            "total_points": detection_result.get("total_points", 0),
+            "valid_points": detection_result.get("valid_points", 0),
+            "false_positives": detection_result.get("false_positives", 0),
+            "events": detection_result.get("events", 0),
+            "event_details": event_details_serializable
+        },
         "burned_area": burned_result,
         "summary": {
             "total_points_detected": detection_result.get("total_points", 0),
@@ -216,7 +232,7 @@ def save_results(detection_result: Dict, burned_result: Dict):
     }
     
     with open(output_dir / "demo_report.json", 'w') as f:
-        json.dump(report, f, indent=2)
+        json.dump(report, f, indent=2, default=str)
     
     logger.info(f"   Сохранено в: {output_dir.absolute()}")
 
