@@ -41,7 +41,7 @@ class FireCandidate(BaseModel):
     daynight: str  # D | N
     satellite: Optional[str] = None
     raw: Dict[str, Any] = Field(default_factory=dict)
-    
+
     # Validation flags
     is_valid: bool = True
     false_positive_score: float = 0.0
@@ -70,7 +70,7 @@ class FireEvent(FireEventCreate):
     area_ha: Optional[float] = None
     severity: Optional[SeverityLevel] = None
     burned_area_geojson: Optional[Dict[str, Any]] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -78,11 +78,15 @@ class FireEvent(FireEventCreate):
 # === Burned Area Schemas ===
 
 class Sentinel2Scene(BaseModel):
-    """Снимок Sentinel-2"""
+    """Sentinel-2 L2A scene plus enough STAC provenance to reproduce analysis."""
     scene_id: str
     datetime: datetime
     cloud_cover: float
     tile_id: Optional[str] = None
+    collection: Optional[str] = None
+    stac_item_url: Optional[str] = None
+    bbox: Optional[List[float]] = None
+    assets: Dict[str, str] = Field(default_factory=dict)
 
 
 class BurnedAreaSelection(BaseModel):
