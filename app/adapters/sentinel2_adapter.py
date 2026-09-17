@@ -1,7 +1,7 @@
 # Sentinel-2 Adapter for STAC API
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -31,7 +31,7 @@ class Sentinel2Adapter:
         start_date: str,
         end_date: str,
         max_cloud_cover: float = 20.0,
-        limit: int = 10,
+        limit: int = 20,
     ) -> List[Sentinel2Scene]:
         """Поиск Sentinel-2 L2A; сохраняет ссылки B08/B12/SCL из STAC item."""
         query = {
@@ -39,7 +39,6 @@ class Sentinel2Adapter:
             "bbox": bbox,
             "datetime": f"{start_date}/{end_date}",
             "limit": limit,
-            # STAC Query extension is supported by Earth Search and many compatible APIs.
             "query": {"eo:cloud_cover": {"lt": max_cloud_cover}},
         }
 
@@ -70,6 +69,13 @@ class Sentinel2Adapter:
                     break
         return selected
 
+    @staticmethod
+    def _self_link(feature: Dict[str, Any]) -> Optional[str]:
+        for link in feature.get("links", []):
+            if link.get("rel") == "self" and link.get("href"):
+                return link["href"]
+        return None
+
     def _parse_stac_response(self, data: Dict[str, Any]) -> List[Sentinel2Scene]:
         scenes: List[Sentinel2Scene] = []
         for feature in data.get("features", []):
@@ -92,7 +98,7 @@ class Sentinel2Adapter:
                         cloud_cover=float(props.get("eo:cloud_cover", 100.0)),
                         tile_id=props.get("grid:code") or props.get("s2:mgrs_tile"),
                         collection=feature.get("collection"),
-                        stac_item_url=(feature.get("links") or [{}])[0].get("href"),
+                        stac_item_url=self._self_link(feature),
                         bbox=feature.get("bbox"),
                         assets=assets,
                     )
@@ -100,6 +106,12 @@ class Sentinel2Adapter:
             except (ValueError, KeyError, TypeError) as exc:
                 logger.warning("Skipping invalid STAC feature: %s", exc)
         return scenes
+
+    @staticmethod
+    def _aware_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     async def find_best_pair(
         self,
@@ -109,7 +121,8 @@ class Sentinel2Adapter:
         days_after: int = 30,
         max_cloud_cover: float = 20.0,
     ) -> tuple[Optional[Sentinel2Scene], Optional[Sentinel2Scene]]:
-        """Найти пару до/после; предпочесть минимум облачности, затем близость к пожару."""
+        """Найти воспроизводимую пару до/после, предпочтительно на одном MGRS tile."""
+        reference_date = self._aware_utc(reference_date)
         pre_start = reference_date - timedelta(days=days_before)
         post_end = reference_date + timedelta(days=days_after)
 
@@ -119,16 +132,24 @@ class Sentinel2Adapter:
         post_scenes = await self.search_scenes(
             bbox, reference_date.isoformat(), post_end.isoformat(), max_cloud_cover
         )
+        if not pre_scenes or not post_scenes:
+            return None, None
 
-        pre_scene = min(
-            pre_scenes,
-            key=lambda s: (s.cloud_cover, abs((reference_date - s.datetime).total_seconds())),
-        ) if pre_scenes else None
-        post_scene = min(
-            post_scenes,
-            key=lambda s: (s.cloud_cover, abs((s.datetime - reference_date).total_seconds())),
-        ) if post_scenes else None
-        return pre_scene, post_scene
+        def score(pre: Sentinel2Scene, post: Sentinel2Scene) -> tuple[float, float]:
+            pre_dt = self._aware_utc(pre.datetime)
+            post_dt = self._aware_utc(post.datetime)
+            temporal_days = abs((reference_date - pre_dt).total_seconds()) / 86400.0
+            temporal_days += abs((post_dt - reference_date).total_seconds()) / 86400.0
+            return pre.cloud_cover + post.cloud_cover, temporal_days
+
+        same_tile_pairs = [
+            (pre, post)
+            for pre in pre_scenes
+            for post in post_scenes
+            if pre.tile_id and post.tile_id and pre.tile_id == post.tile_id
+        ]
+        pairs = same_tile_pairs or [(pre, post) for pre in pre_scenes for post in post_scenes]
+        return min(pairs, key=lambda pair: score(pair[0], pair[1]))
 
     async def get_from_fixture(self, fixture_path: str) -> tuple[Sentinel2Scene, Sentinel2Scene]:
         import json
