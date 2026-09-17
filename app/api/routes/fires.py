@@ -2,13 +2,13 @@
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from app.core.schemas import AnalyzeRequest
-from app.services.fire_detection import FireDetectionService
+from app.core.schemas import AnalyzeRequest, ConfidenceLevel
+from app.services.burned_area_mapper import BurnedAreaMapper
 from app.services.false_positive_filter import FalsePositiveFilter
 from app.services.fire_clustering import FireClusteringService
-from app.services.burned_area_mapper import BurnedAreaMapper
+from app.services.fire_detection import FireDetectionService
 
 
 router = APIRouter(prefix="/fires", tags=["Fires"])
@@ -27,21 +27,46 @@ def get_services():
     """Получить или создать сервисы."""
     global _detection_service, _filter_service, _clustering_service, _burned_area_mapper
 
+    from app.core.config import settings
+
     if _detection_service is None:
-        from app.core.config import settings
         _detection_service = FireDetectionService.create_default(
             firms_api_key=settings.firms_map_key,
             offline_mode=settings.offline_mode,
             cache_dir=settings.cache_dir,
         )
     if _filter_service is None:
-        _filter_service = FalsePositiveFilter()
+        _filter_service = FalsePositiveFilter(
+            whitelist_path=settings.industrial_whitelist_path,
+            min_confidence=settings.default_min_confidence,
+        )
     if _clustering_service is None:
-        _clustering_service = FireClusteringService()
+        _clustering_service = FireClusteringService(
+            min_points_per_event=max(1, settings.min_fire_point_cluster_size)
+        )
     if _burned_area_mapper is None:
-        from app.core.config import settings
         _burned_area_mapper = BurnedAreaMapper(output_dir=settings.output_dir)
     return _detection_service, _filter_service, _clustering_service, _burned_area_mapper
+
+
+def _candidate_payload(point) -> dict:
+    return {
+        "id": point.id,
+        "source": point.source,
+        "sensor": point.sensor,
+        "datetime": point.datetime.isoformat(),
+        "latitude": point.latitude,
+        "longitude": point.longitude,
+        "brightness_temp_k": point.brightness_temp_k,
+        "frp_mw": point.frp_mw,
+        "confidence": point.confidence.value,
+        "daynight": point.daynight,
+        "satellite": point.satellite,
+        "is_valid": point.is_valid,
+        "filters_passed": point.filters_passed,
+        "filters_failed": point.filters_failed,
+        "reason": point.reason,
+    }
 
 
 @router.get("")
@@ -52,7 +77,7 @@ async def list_fires(
     sensor: Optional[str] = Query(None, description="Sensor type: MODIS, VIIRS"),
     min_confidence: str = Query("nominal", description="Minimum confidence level"),
 ):
-    """Получить GeoJSON термических аномалий и аудит фильтрации."""
+    """Получить GeoJSON принятых термических аномалий и полный аудит фильтрации."""
     try:
         bbox_coords = [float(x) for x in bbox.split(",")]
         if len(bbox_coords) != 4:
@@ -60,33 +85,38 @@ async def list_fires(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid bbox coordinates") from exc
 
+    try:
+        confidence_threshold = ConfidenceLevel(min_confidence.lower())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="min_confidence must be one of: low, nominal, high",
+        ) from exc
+
     detection_service, filter_service, _, _ = get_services()
-    sensors = [sensor] if sensor else None
+    filter_service.min_confidence = confidence_threshold
+    sensors = [sensor.upper()] if sensor else None
     points = await detection_service.detect_fires(bbox_coords, start_date, end_date, sensors)
     filtered_points = await filter_service.filter_points(points)
 
     features = []
     for point in filtered_points:
-        if point.is_valid:
-            features.append({
+        features.append(
+            {
                 "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [point.longitude, point.latitude]},
-                "properties": {
-                    "id": point.id,
-                    "sensor": point.sensor,
-                    "datetime": point.datetime.isoformat(),
-                    "brightness_temp_k": point.brightness_temp_k,
-                    "frp_mw": point.frp_mw,
-                    "confidence": point.confidence.value,
-                    "daynight": point.daynight,
-                    "filters_passed": point.filters_passed,
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [point.longitude, point.latitude],
                 },
-            })
+                "properties": _candidate_payload(point),
+            }
+        )
     return {
         "type": "FeatureCollection",
         "features": features,
         "total": len(features),
         "filter_audit": filter_service.audit_summary(),
+        "rejected_candidates": [_candidate_payload(p) for p in filter_service.last_rejected],
     }
 
 
@@ -143,11 +173,17 @@ async def _map_event(event, burned_area_mapper, request_bbox):
 async def analyze_region(request: AnalyzeRequest):
     """Run detection -> filtering -> clustering -> Sentinel-2 burn mapping."""
     from uuid import uuid4
-    from app.core.schemas import SeverityLevel, FireStatus
+
+    from app.core.schemas import FireStatus, SeverityLevel
 
     detection_service, filter_service, clustering_service, burned_area_mapper = get_services()
+    filter_service.min_confidence = request.min_confidence
+
     points = await detection_service.detect_fires(
-        request.bbox, request.start_date, request.end_date, request.sensors
+        request.bbox,
+        request.start_date,
+        request.end_date,
+        [sensor.upper() for sensor in request.sensors],
     )
     filtered_points = await filter_service.filter_points(points)
     filter_audit = filter_service.audit_summary()
@@ -178,39 +214,72 @@ async def analyze_region(request: AnalyzeRequest):
             _report_store[event.id] = burned_result
             _provenance_store[event.id] = provenance
             mapped_count += 1
-            event_summaries.append({
-                "event_id": event.id,
-                "status": "mapped",
-                "centroid": [event.centroid_lon, event.centroid_lat],
-                "point_count": event.point_count,
-                "sensors": event.sensors,
-                "area_ha": burned_result.area_ha,
-                "severity_summary": burned_result.severity_summary.model_dump() if burned_result.severity_summary else None,
-                "burned_geojson_url": f"/api/v1/events/{event.id}/burned.geojson",
-                "report_url": f"/api/v1/events/{event.id}/report",
-                "provenance": provenance,
-            })
+            event_summaries.append(
+                {
+                    "event_id": event.id,
+                    "status": "burn_mapping_completed",
+                    "centroid": [event.centroid_lon, event.centroid_lat],
+                    "point_count": event.point_count,
+                    "sensors": event.sensors,
+                    "area_ha": burned_result.area_ha,
+                    "severity_summary": (
+                        burned_result.severity_summary.model_dump()
+                        if burned_result.severity_summary
+                        else None
+                    ),
+                    "burned_geojson_url": f"/api/v1/events/{event.id}/burned.geojson",
+                    "report_url": f"/api/v1/events/{event.id}/report",
+                    "provenance": provenance,
+                }
+            )
         except Exception as exc:
+            # Detection/event is still valid; only stage 2 is unavailable.
             event.status = FireStatus.ACTIVE
-            event_summaries.append({
-                "event_id": event.id,
-                "status": "burn_mapping_unavailable",
-                "centroid": [event.centroid_lon, event.centroid_lat],
-                "point_count": event.point_count,
-                "sensors": event.sensors,
-                "area_ha": None,
-                "reason": str(exc),
-            })
+            _burned_area_store.pop(event.id, None)
+            _report_store.pop(event.id, None)
+            _provenance_store.pop(event.id, None)
+            event_summaries.append(
+                {
+                    "event_id": event.id,
+                    "status": "burn_mapping_unavailable",
+                    "centroid": [event.centroid_lon, event.centroid_lat],
+                    "point_count": event.point_count,
+                    "sensors": event.sensors,
+                    "area_ha": None,
+                    "reason": str(exc),
+                }
+            )
+
+    if not events:
+        overall_status = "completed"
+    elif mapped_count == len(events):
+        overall_status = "completed"
+    else:
+        overall_status = "partial"
 
     job_id = f"job_{uuid4().hex[:8]}"
     return {
         "job_id": job_id,
-        "status": "completed",
+        "status": overall_status,
+        "stages": {
+            "detection": "completed",
+            "filtering": "completed",
+            "clustering": "completed",
+            "burn_mapping": (
+                "completed"
+                if not events or mapped_count == len(events)
+                else "partial"
+            ),
+        },
         "events_found": len(events),
         "events_mapped": mapped_count,
         "fire_points_found": len(points),
         "fire_points_after_filter": len(filtered_points),
         "filter_audit": filter_audit,
+        "rejected_candidates": [_candidate_payload(p) for p in filter_service.last_rejected],
         "events": event_summaries,
-        "message": f"Found {len(filtered_points)} filtered fire points; mapped {mapped_count}/{len(events)} events",
+        "message": (
+            f"Found {len(filtered_points)} accepted fire candidates; "
+            f"mapped {mapped_count}/{len(events)} events"
+        ),
     }
