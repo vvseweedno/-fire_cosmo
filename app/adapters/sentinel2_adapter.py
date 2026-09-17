@@ -1,7 +1,7 @@
 # Sentinel-2 Adapter for STAC API
 import logging
-from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -12,12 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 class Sentinel2Adapter:
-    """Адаптер поиска Sentinel-2 L2A через STAC API с raster provenance."""
+    """Search Sentinel-2 L2A scenes and retain reproducible raster provenance."""
 
+    # STAC common-name convention: nir=B08 (10 m), nir08=B8A (20 m),
+    # swir22=B12 (20 m). Keep them distinct: B8A is preferred for NBR because
+    # it is natively aligned in resolution with B12.
     ASSET_ALIASES = {
-        "B08": ("B08", "nir", "nir08"),
-        "B12": ("B12", "swir22", "swir2"),
-        "SCL": ("SCL", "scl"),
+        "B8A": ("nir08", "B8A", "b8a"),
+        "B08": ("nir", "B08", "b08"),
+        "B12": ("swir22", "B12", "b12"),
+        "SCL": ("scl", "SCL"),
     }
 
     def __init__(self, stac_api_url: str, token: str | None = None):
@@ -33,7 +37,6 @@ class Sentinel2Adapter:
         max_cloud_cover: float = 20.0,
         limit: int = 20,
     ) -> List[Sentinel2Scene]:
-        """Поиск Sentinel-2 L2A; сохраняет ссылки B08/B12/SCL из STAC item."""
         query = {
             "collections": ["sentinel-2-l2a"],
             "bbox": bbox,
@@ -41,7 +44,6 @@ class Sentinel2Adapter:
             "limit": limit,
             "query": {"eo:cloud_cover": {"lt": max_cloud_cover}},
         }
-
         headers = {"Accept": "application/geo+json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -58,16 +60,32 @@ class Sentinel2Adapter:
             logger.error("Unexpected error searching Sentinel-2: %s", exc)
             return []
 
+    @staticmethod
+    def _raster_metadata(asset: Dict[str, Any]) -> Dict[str, Any]:
+        bands = asset.get("raster:bands") or []
+        if not bands or not isinstance(bands[0], dict):
+            return {}
+        band = bands[0]
+        return {
+            key: band[key]
+            for key in ("scale", "offset", "nodata", "data_type", "spatial_resolution")
+            if key in band
+        }
+
     @classmethod
-    def _select_assets(cls, raw_assets: Dict[str, Any]) -> Dict[str, str]:
+    def _select_assets(
+        cls, raw_assets: Dict[str, Any]
+    ) -> tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
         selected: Dict[str, str] = {}
+        metadata: Dict[str, Dict[str, Any]] = {}
         for canonical, aliases in cls.ASSET_ALIASES.items():
             for alias in aliases:
                 asset = raw_assets.get(alias)
                 if isinstance(asset, dict) and asset.get("href"):
                     selected[canonical] = asset["href"]
+                    metadata[canonical] = cls._raster_metadata(asset)
                     break
-        return selected
+        return selected, metadata
 
     @staticmethod
     def _self_link(feature: Dict[str, Any]) -> Optional[str]:
@@ -86,9 +104,9 @@ class Sentinel2Adapter:
                 if not dt_str:
                     raise ValueError("missing datetime")
                 dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                assets = self._select_assets(feature.get("assets", {}))
-                if "B08" not in assets or "B12" not in assets:
-                    logger.warning("Skipping %s: no B08/B12-compatible STAC assets", scene_id)
+                assets, asset_metadata = self._select_assets(feature.get("assets", {}))
+                if "B12" not in assets or not ({"B8A", "B08"} & set(assets)):
+                    logger.warning("Skipping %s: no B12 and compatible NIR asset", scene_id)
                     continue
 
                 scenes.append(
@@ -101,6 +119,7 @@ class Sentinel2Adapter:
                         stac_item_url=self._self_link(feature),
                         bbox=feature.get("bbox"),
                         assets=assets,
+                        asset_metadata=asset_metadata,
                     )
                 )
             except (ValueError, KeyError, TypeError) as exc:
@@ -121,7 +140,7 @@ class Sentinel2Adapter:
         days_after: int = 30,
         max_cloud_cover: float = 20.0,
     ) -> tuple[Optional[Sentinel2Scene], Optional[Sentinel2Scene]]:
-        """Найти воспроизводимую пару до/после, предпочтительно на одном MGRS tile."""
+        """Find a pre/post pair, preferring same tile and complete 20 m assets."""
         reference_date = self._aware_utc(reference_date)
         pre_start = reference_date - timedelta(days=days_before)
         post_end = reference_date + timedelta(days=days_after)
@@ -135,12 +154,17 @@ class Sentinel2Adapter:
         if not pre_scenes or not post_scenes:
             return None, None
 
-        def score(pre: Sentinel2Scene, post: Sentinel2Scene) -> tuple[float, float]:
+        def score(pre: Sentinel2Scene, post: Sentinel2Scene) -> tuple[int, float, float]:
+            # Prefer B8A+B12+SCL in both scenes; then cloud cover; then temporal closeness.
+            required_preferred = {"B8A", "B12", "SCL"}
+            completeness_penalty = int(not required_preferred.issubset(pre.assets)) + int(
+                not required_preferred.issubset(post.assets)
+            )
             pre_dt = self._aware_utc(pre.datetime)
             post_dt = self._aware_utc(post.datetime)
             temporal_days = abs((reference_date - pre_dt).total_seconds()) / 86400.0
             temporal_days += abs((post_dt - reference_date).total_seconds()) / 86400.0
-            return pre.cloud_cover + post.cloud_cover, temporal_days
+            return completeness_penalty, pre.cloud_cover + post.cloud_cover, temporal_days
 
         same_tile_pairs = [
             (pre, post)
