@@ -31,15 +31,12 @@ class FireClusteringService:
         self._event_index: Dict[int, str] = {}
 
     async def cluster_points(self, points: List[FireCandidate]) -> List[FireEvent]:
-        """Cluster one analysis batch and return only events touched by that batch."""
         if not points:
             return []
-
         touched: set[str] = set()
         for point in sorted(points, key=lambda p: (p.datetime, p.id)):
             event = await self._process_point(point)
             touched.add(event.id)
-
         valid_events = [
             self.events[event_id]
             for event_id in sorted(touched)
@@ -52,19 +49,14 @@ class FireClusteringService:
         existing_event_id = self._point_to_event.get(point.id)
         if existing_event_id and existing_event_id in self.events:
             return self.events[existing_event_id]
-
-        nearby_events = await self._find_nearby_events(
-            point.latitude, point.longitude, point.datetime
-        )
+        nearby_events = await self._find_nearby_events(point.latitude, point.longitude, point.datetime)
         if nearby_events:
             target_event = nearby_events[0]
             await self._update_event_with_point(target_event, point)
             return target_event
         return await self._create_new_event(point)
 
-    async def _find_nearby_events(
-        self, lat: float, lon: float, observed_at: datetime
-    ) -> List[FireEvent]:
+    async def _find_nearby_events(self, lat: float, lon: float, observed_at: datetime) -> List[FireEvent]:
         if not self.events:
             return []
         if self._event_tree is None:
@@ -77,7 +69,6 @@ class FireClusteringService:
         lon_radius = self.spatial_radius_km / (111.32 * max(cos(radians(lat)), 0.2))
         bbox = point.buffer(max(lat_radius, lon_radius))
         candidates = self._event_tree.query(bbox)
-
         nearby = []
         for raw_idx in candidates:
             idx = int(raw_idx)
@@ -87,17 +78,12 @@ class FireClusteringService:
                 continue
             if abs((observed_at - event.last_seen).total_seconds()) > self.temporal_window_hours * 3600:
                 continue
-            distance = self._haversine_distance(
-                lat, lon, event.centroid_lat, event.centroid_lon
-            )
+            distance = self._haversine_distance(lat, lon, event.centroid_lat, event.centroid_lon)
             if distance <= self.spatial_radius_km:
                 nearby.append(event)
-
         return sorted(
             nearby,
-            key=lambda e: self._haversine_distance(
-                lat, lon, e.centroid_lat, e.centroid_lon
-            ),
+            key=lambda e: self._haversine_distance(lat, lon, e.centroid_lat, e.centroid_lon),
         )
 
     def _rebuild_event_tree(self):
@@ -120,15 +106,11 @@ class FireClusteringService:
         event.first_seen = min(event.first_seen, point.datetime)
         event.last_seen = max(event.last_seen, point.datetime)
         event.point_count = len(event.fire_points)
-        if point.frp_mw is not None and (
-            event.max_frp is None or point.frp_mw > event.max_frp
-        ):
+        if point.frp_mw is not None and (event.max_frp is None or point.frp_mw > event.max_frp):
             event.max_frp = point.frp_mw
         await self._recalculate_centroid(event)
         if point.sensor not in event.sensors:
             event.sensors.append(point.sensor)
-        # A newly observed point makes the event active again; burn mapping can
-        # then be recomputed for the updated event.
         event.status = FireStatus.ACTIVE
         self._point_to_event[point.id] = event.id
         self._event_tree = None
@@ -141,11 +123,9 @@ class FireClusteringService:
 
     async def _create_new_event(self, point: FireCandidate) -> FireEvent:
         event_id = self._event_id_from_first_point(point)
-        # Extremely unlikely SHA-prefix collision: extend deterministically.
         if event_id in self.events and point.id not in self._point_to_event:
             digest = hashlib.sha1((point.id + "|event").encode("utf-8")).hexdigest()[:16]
             event_id = f"fire_{digest}"
-
         event = FireEvent(
             id=event_id,
             event_id=event_id,
@@ -195,10 +175,17 @@ class FireClusteringService:
         return decayed_count
 
     def get_event_by_id(self, event_id: str) -> Optional[FireEvent]:
-        return self.events.get(event_id)
+        event = self.events.get(event_id)
+        if event and len(event.fire_points) >= self.min_points_per_event:
+            return event
+        return None
 
     def get_all_events(self) -> List[FireEvent]:
-        return list(self.events.values())
+        return [
+            event
+            for event in self.events.values()
+            if len(event.fire_points) >= self.min_points_per_event
+        ]
 
     async def clear_events(self):
         self.events.clear()
