@@ -3,283 +3,189 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wildfire Nexus Core - Мониторинг лесных пожаров</title>
-    
-    <!-- Leaflet CSS -->
+    <title>Wildfire Nexus — проверяемый мониторинг пожаров</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; }
-        
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Inter, Arial, sans-serif; color: #171717; }
         #map { height: 100vh; width: 100%; }
-        
-        .controls {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            z-index: 1000;
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            max-width: 300px;
+        .panel {
+            position: absolute; z-index: 1000; background: rgba(255,255,255,.96);
+            border-radius: 10px; box-shadow: 0 2px 14px rgba(0,0,0,.18); padding: 14px;
         }
-        
-        .controls h3 { margin-bottom: 10px; font-size: 16px; }
-        
-        .control-group { margin-bottom: 10px; }
-        .control-group label { display: block; font-size: 12px; margin-bottom: 5px; color: #666; }
-        .control-group input, .control-group select {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        
-        button {
-            width: 100%;
-            padding: 10px;
-            background: #f44336;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        button:hover { background: #d32f2f; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        
-        .legend {
-            position: absolute;
-            bottom: 30px;
-            left: 10px;
-            z-index: 1000;
-            background: white;
-            padding: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-        }
-        
-        .legend-item {
-            display: flex;
-            align-items: center;
-            margin: 5px 0;
-            font-size: 12px;
-        }
-        
-        .legend-color {
-            width: 20px;
-            height: 20px;
-            margin-right: 10px;
-            border-radius: 3px;
-        }
-        
-        .status-bar {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            z-index: 1000;
-            background: white;
-            padding: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            font-size: 12px;
-        }
-        
-        .loading { opacity: 0.5; pointer-events: none; }
+        .controls { top: 10px; right: 10px; width: 315px; }
+        .event-card { top: 10px; left: 55px; width: 390px; max-height: 52vh; overflow: auto; display: none; }
+        .legend { bottom: 35px; left: 10px; }
+        .status { bottom: 10px; right: 10px; max-width: 520px; }
+        h3 { margin: 0 0 10px; font-size: 16px; }
+        .group { margin-bottom: 9px; }
+        label { display:block; color:#666; font-size:11px; margin-bottom:4px; }
+        input, select { width:100%; padding:7px; border:1px solid #ddd; border-radius:5px; }
+        button { width:100%; padding:9px; border:0; border-radius:6px; background:#c62828; color:white; font-weight:700; cursor:pointer; }
+        button:disabled { background:#aaa; }
+        .badge { display:inline-block; padding:4px 7px; border-radius:999px; font-size:11px; font-weight:700; margin-bottom:9px; }
+        .offline { background:#fff3cd; color:#664d03; }
+        .online { background:#d1e7dd; color:#0f5132; }
+        .metric { font-size:12px; margin:4px 0; }
+        .muted { color:#666; font-size:11px; }
+        .warning { color:#8a4b08; }
+        .ok { color:#146c43; }
+        .bad { color:#b02a37; }
+        .legend-row { display:flex; align-items:center; gap:7px; font-size:11px; margin:4px 0; }
+        .swatch { width:14px; height:14px; border-radius:3px; }
+        pre { white-space:pre-wrap; word-break:break-word; font-size:10px; background:#f6f6f6; padding:7px; border-radius:5px; }
     </style>
 </head>
 <body>
-    <div id="map"></div>
-    
-    <div class="controls">
-        <h3>Оперативный мониторинг</h3>
-        
-        <div class="control-group">
-            <label>BBOX (min_lon, min_lat, max_lon, max_lat)</label>
-            <input type="text" id="bbox" value="91.80,55.85,92.20,56.15" />
-        </div>
-        
-        <div class="control-group">
-            <label>Дата начала</label>
-            <input type="date" id="start_date" value="2026-07-15" />
-        </div>
-        
-        <div class="control-group">
-            <label>Дата конца</label>
-            <input type="date" id="end_date" value="2026-07-16" />
-        </div>
-        
-        <div class="control-group">
-            <label>Сенсор</label>
-            <select id="sensor">
-                <option value="">Все</option>
-                <option value="MODIS">MODIS</option>
-                <option value="VIIRS">VIIRS</option>
-            </select>
-        </div>
-        
-        <button id="analyzeBtn" onclick="analyzeRegion()">Анализировать</button>
-    </div>
-    
-    <div class="legend">
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ff0000;"></div>
-            <span>Высокая степень поражения</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ff8800;"></div>
-            <span>Средняя степень</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ffcc00;"></div>
-            <span>Низкая степень</span>
-        </div>
-        <div class="legend-item">
-            <div class="legend-color" style="background: #ff6b6b; border-radius: 50%;"></div>
-            <span>Активные очаги</span>
-        </div>
-    </div>
-    
-    <div class="status-bar" id="statusBar">
-        Статус: Готов к работе
-    </div>
-    
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <script>
-        // Инициализация карты
-        const map = L.map('map').setView([56.0, 92.0], 10);
-        
-        // Базовая подложка
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
-        
-        // Слои
-        const firePointsLayer = L.layerGroup().addTo(map);
-        const burnedAreaLayer = L.layerGroup().addTo(map);
-        
-        let currentEvents = [];
-        
-        function updateStatus(message) {
-            document.getElementById('statusBar').textContent = 'Статус: ' + message;
-        }
-        
-        async function analyzeRegion() {
-            const btn = document.getElementById('analyzeBtn');
-            btn.disabled = true;
-            btn.textContent = 'Анализ...';
-            
-            const bbox = document.getElementById('bbox').value;
-            const startDate = document.getElementById('start_date').value;
-            const endDate = document.getElementById('end_date').value;
-            const sensor = document.getElementById('sensor').value;
-            
-            try {
-                updateStatus('Загрузка данных о пожарах...');
-                
-                const sensors = sensor ? [sensor] : ['MODIS', 'VIIRS'];
-                const response = await fetch('/api/v1/fires/analyze', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        bbox: bbox.split(',').map(Number),
-                        start_date: startDate,
-                        end_date: endDate,
-                        sensors
-                    })
-                });
-                const result = await response.json();
-                
-                // Очистка слоев
-                firePointsLayer.clearLayers();
-                burnedAreaLayer.clearLayers();
+<div id="map"></div>
 
-                const url = `/api/v1/fires?bbox=${encodeURIComponent(bbox)}&start_date=${startDate}&end_date=${endDate}${sensor ? '&sensor=' + sensor : ''}`;
-                const pointsResponse = await fetch(url);
-                const data = await pointsResponse.json();
-                
-                // Отображение точек пожаров
-                if (data.features && data.features.length > 0) {
-                    data.features.forEach(feature => {
-                        const [lon, lat] = feature.geometry.coordinates;
-                        const props = feature.properties;
-                        
-                        // Маркер очага
-                        const marker = L.circleMarker([lat, lon], {
-                            radius: 6,
-                            fillColor: '#ff6b6b',
-                            color: '#fff',
-                            weight: 2,
-                            fillOpacity: 0.8
-                        });
-                        
-                        marker.bindPopup(`
-                            <strong>${props.sensor}</strong><br>
-                            Дата: ${new Date(props.datetime).toLocaleString()}<br>
-                            Температура: ${props.brightness_temp_k} K<br>
-                            FRP: ${props.frp_mw || 'N/A'} MW<br>
-                            Уверенность: ${props.confidence}
-                        `);
-                        
-                        marker.addTo(firePointsLayer);
-                    });
-                    
-                    updateStatus(`Найдено ${data.total} очагов, событий: ${result.events_found}`);
-                } else {
-                    updateStatus('Очагов не найдено');
-                }
+<div class="panel controls">
+    <h3>Wildfire Nexus</h3>
+    <div id="modeBadge" class="badge">проверка режима…</div>
+    <div class="group"><label>BBOX</label><input id="bbox" value="91.80,55.85,92.20,56.15"></div>
+    <div class="group"><label>Дата начала</label><input type="date" id="start_date" value="2026-07-15"></div>
+    <div class="group"><label>Дата конца</label><input type="date" id="end_date" value="2026-07-16"></div>
+    <div class="group"><label>Сенсор</label><select id="sensor"><option value="">MODIS + VIIRS</option><option>MODIS</option><option>VIIRS</option></select></div>
+    <div class="group"><label>Минимальная confidence</label><select id="minConfidence"><option value="low">low</option><option value="nominal" selected>nominal</option><option value="high">high</option></select></div>
+    <button id="analyzeBtn" onclick="analyzeRegion()">Анализировать</button>
+    <div id="audit" class="muted" style="margin-top:10px">Фильтр ещё не запускался.</div>
+</div>
 
-                if (result.events) {
-                    for (const event of result.events) {
-                        const burnedResponse = await fetch(event.burned_geojson_url);
-                        const burned = await burnedResponse.json();
-                        L.geoJSON(burned, {
-                            style: f => ({
-                                color: '#333',
-                                weight: 1,
-                                fillColor: f.properties.fill || '#ff8800',
-                                fillOpacity: 0.45
-                            }),
-                            onEachFeature: (feature, layer) => {
-                                layer.bindPopup(`
-                                    <strong>Гарь ${feature.properties.severity}</strong><br>
-                                    Площадь: ${feature.properties.area_ha} га<br>
-                                    Событие: ${feature.properties.event_id}
-                                `);
-                            }
-                        }).addTo(burnedAreaLayer);
-                    }
-                }
-                
-            } catch (error) {
-                console.error('Error:', error);
-                updateStatus('Ошибка: ' + error.message);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Анализировать';
-            }
+<div id="eventCard" class="panel event-card"></div>
+
+<div class="panel legend">
+    <div class="legend-row"><span class="swatch" style="background:#d73027"></span> высокая степень</div>
+    <div class="legend-row"><span class="swatch" style="background:#fc8d59"></span> средняя степень</div>
+    <div class="legend-row"><span class="swatch" style="background:#fee08b"></span> низкая степень</div>
+    <div class="legend-row"><span class="swatch" style="background:#d7191c;border-radius:50%"></span> принятый очаг</div>
+    <div class="legend-row"><span class="swatch" style="background:#777;border-radius:50%"></span> отклонённый кандидат</div>
+</div>
+<div class="panel status" id="statusBar">Готов к работе.</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([56.0, 92.0], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap contributors' }).addTo(map);
+const acceptedLayer = L.layerGroup().addTo(map);
+const rejectedLayer = L.layerGroup().addTo(map);
+const burnedLayer = L.layerGroup().addTo(map);
+const severityColor = {low_severity:'#fee08b', moderate_severity:'#fc8d59', high_severity:'#d73027'};
+
+function status(text, kind='') {
+    const el = document.getElementById('statusBar');
+    el.textContent = text;
+    el.className = 'panel status ' + kind;
+}
+function esc(v) { return String(v ?? '—').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function loadMode() {
+    try {
+        const health = await (await fetch('/api/v1/health')).json();
+        const badge = document.getElementById('modeBadge');
+        badge.textContent = health.offline_mode ? 'OFFLINE REPRODUCIBLE DEMO' : 'ONLINE REAL-DATA MODE';
+        badge.className = 'badge ' + (health.offline_mode ? 'offline' : 'online');
+    } catch (_) {}
+}
+
+function renderAudit(audit) {
+    if (!audit) return;
+    document.getElementById('audit').innerHTML = `
+        <b>Filter audit</b><br>
+        кандидатов: ${audit.candidates_total ?? 0} · принято: ${audit.accepted ?? 0} · отклонено: ${audit.rejected ?? 0}<br>
+        threshold: ${esc(audit.min_confidence)}<br>
+        причины: ${esc(JSON.stringify(audit.rejected_by_reason || {}))}
+    `;
+}
+
+function addCandidate(point, accepted=true) {
+    const marker = L.circleMarker([point.latitude, point.longitude], {
+        radius: accepted ? 6 : 5,
+        fillColor: accepted ? '#d7191c' : '#777', color:'#fff', weight:1.5, fillOpacity: accepted ? .85 : .55
+    });
+    marker.bindPopup(`<b>${esc(point.sensor)}</b> / ${esc(point.source)}<br>${esc(point.datetime)}<br>FRP: ${esc(point.frp_mw)} MW<br>confidence: ${esc(point.confidence)}<br>${accepted ? 'passed: '+esc((point.filters_passed||[]).join(', ')) : 'rejected: '+esc(point.reason)}`);
+    marker.addTo(accepted ? acceptedLayer : rejectedLayer);
+}
+
+async function showReport(event) {
+    const card = document.getElementById('eventCard');
+    card.style.display = 'block';
+    if (event.status !== 'burn_mapping_completed' || !event.report_url) {
+        card.innerHTML = `<h3>${esc(event.event_id)}</h3><div class="bad">Картирование гари недоступно</div><div class="muted">${esc(event.reason)}</div>`;
+        return;
+    }
+    try {
+        const report = await (await fetch(event.report_url)).json();
+        const p = report.processing_provenance || {};
+        const pre = report.sentinel2_pre || {};
+        const post = report.sentinel2_post || {};
+        card.innerHTML = `
+            <h3>Explainable Wildfire Event</h3>
+            <div class="metric"><b>${esc(event.event_id)}</b></div>
+            <div class="metric">Площадь: <b>${esc(report.burned_area?.area_ha)} га</b></div>
+            <div class="metric">Метод: ${esc(report.burned_area?.method)}</div>
+            <div class="metric">Уверенность: ${esc(report.confidence)}</div>
+            <hr>
+            <div class="metric"><b>Sentinel‑2 pre</b>: ${esc(pre.scene_id)} · cloud ${esc(pre.cloud_cover)}%</div>
+            <div class="metric"><b>Sentinel‑2 post</b>: ${esc(post.scene_id)} · cloud ${esc(post.cloud_cover)}%</div>
+            <div class="metric">NIR: ${esc(p.nir_band_pre)} / ${esc(p.nir_band_post)} · grid: ${esc(p.common_grid)}</div>
+            <div class="metric">valid pixels: ${esc(p.valid_pixels)} · masked: ${esc(p.masked_pixels)} · affected: ${esc(p.affected_pixels)}</div>
+            <div class="metric">observed: ${esc(p.observed_area_ha)} га · unobserved: ${esc(p.unobserved_area_ha)} га</div>
+            ${(report.warnings||[]).map(x=>`<div class="warning">⚠ ${esc(x)}</div>`).join('')}
+            <details><summary>Machine-readable provenance</summary><pre>${esc(JSON.stringify(p,null,2))}</pre></details>
+        `;
+    } catch (e) {
+        card.innerHTML = `<h3>${esc(event.event_id)}</h3><div class="bad">Не удалось загрузить report: ${esc(e.message)}</div>`;
+    }
+}
+
+async function analyzeRegion() {
+    const btn = document.getElementById('analyzeBtn');
+    btn.disabled = true; btn.textContent = 'Анализ…';
+    acceptedLayer.clearLayers(); rejectedLayer.clearLayers(); burnedLayer.clearLayers();
+    document.getElementById('eventCard').style.display = 'none';
+
+    const bbox = document.getElementById('bbox').value;
+    const start = document.getElementById('start_date').value;
+    const end = document.getElementById('end_date').value;
+    const sensor = document.getElementById('sensor').value;
+    const minConfidence = document.getElementById('minConfidence').value;
+    const sensors = sensor ? [sensor] : ['MODIS','VIIRS'];
+
+    try {
+        status('Этап 1/2: термические кандидаты и фильтрация…');
+        const response = await fetch('/api/v1/fires/analyze', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bbox:bbox.split(',').map(Number), start_date:start, end_date:end, sensors, min_confidence:minConfidence})});
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+        renderAudit(result.filter_audit);
+
+        const query = `/api/v1/fires?bbox=${encodeURIComponent(bbox)}&start_date=${start}&end_date=${end}&min_confidence=${minConfidence}${sensor ? '&sensor='+sensor : ''}`;
+        const fireData = await (await fetch(query)).json();
+        (fireData.features || []).forEach(f => addCandidate(f.properties, true));
+        (fireData.rejected_candidates || []).forEach(p => addCandidate(p, false));
+
+        for (const event of result.events || []) {
+            if (event.status !== 'burn_mapping_completed' || !event.burned_geojson_url) continue;
+            const r = await fetch(event.burned_geojson_url);
+            if (!r.ok) continue;
+            const geo = await r.json();
+            L.geoJSON(geo, {
+                style: f => ({color:'#333', weight:1, fillColor:severityColor[f.properties.severity] || '#fc8d59', fillOpacity:.5}),
+                onEachFeature: (feature, layer) => layer.on('click', () => showReport(event))
+            }).addTo(burnedLayer);
         }
-        
-        // Загрузка событий при старте
-        async function loadEvents() {
-            try {
-                const response = await fetch('/api/v1/events');
-                const data = await response.json();
-                
-                if (data.events && data.events.length > 0) {
-                    currentEvents = data.events;
-                    updateStatus(`Загружено ${data.total} событий`);
-                }
-            } catch (error) {
-                console.error('Error loading events:', error);
-            }
-        }
-        
-        loadEvents();
-    </script>
+
+        const failed = (result.events || []).filter(e => e.status !== 'burn_mapping_completed').length;
+        const cls = result.status === 'completed' ? 'ok' : 'warning';
+        status(`Статус: ${result.status}. Принято точек: ${result.fire_points_after_filter}; событий: ${result.events_found}; гарь построена: ${result.events_mapped}; недоступно: ${failed}.`, cls);
+        if ((result.events || []).length) showReport(result.events[0]);
+    } catch (e) {
+        console.error(e); status('Ошибка: ' + e.message, 'bad');
+    } finally {
+        btn.disabled = false; btn.textContent = 'Анализировать';
+    }
+}
+
+loadMode();
+</script>
 </body>
 </html>
