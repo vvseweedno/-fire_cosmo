@@ -20,9 +20,9 @@ services:
       - DATA_DIR=/app/data
       - CACHE_DIR=/app/data/cache
       - OUTPUT_DIR=/app/data/outputs
-      # API Keys (optional, not needed in offline mode)
+      # API keys / external data sources
       - EARTHDATA_TOKEN=${EARTHDATA_TOKEN:-}
-      - FIRMS_API_KEY=${FIRMS_API_KEY:-}
+      - FIRMS_MAP_KEY=${FIRMS_MAP_KEY:-}
       # STAC API endpoint
       - SENTINEL2_STAC_API=${SENTINEL2_STAC_API:-https://earth-search.aws.element84.com/v1}
       # Detection thresholds
