@@ -1,5 +1,7 @@
 # Burned Area Mapper Service (NBR/dNBR calculation)
 import logging
+import json
+import math
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 
@@ -49,11 +51,13 @@ class BurnedAreaMapper:
             NBR raster
         """
         # Избегаем деления на ноль
-        denominator = nir_band + swir_band
+        nir = nir_band.astype(np.float32)
+        swir = swir_band.astype(np.float32)
+        denominator = nir + swir
         mask = denominator == 0
         
         nbr = np.zeros_like(nir_band, dtype=np.float32)
-        nbr[~mask] = (nir_band[~mask] - swir_band[~mask]) / denominator[~mask]
+        nbr[~mask] = (nir[~mask] - swir[~mask]) / denominator[~mask]
         
         # Масштабирование [-1, 1]
         nbr = np.clip(nbr, -1, 1)
@@ -133,7 +137,7 @@ class BurnedAreaMapper:
         # Получаем уникальные значения и их площади
         features = []
         
-        for i, class_value in enumerate([0, 1, 2, 3]):
+        for class_value in [1, 2, 3]:
             mask = severity_raster == class_value
             
             if not np.any(mask):
@@ -210,20 +214,24 @@ class BurnedAreaMapper:
             # Агрегация по severity
             severity_areas = gdf_projected.groupby('severity')['area_m2'].sum()
             
+            affected_area_m2 = float(
+                severity_areas.get('low_severity', 0.0)
+                + severity_areas.get('moderate_severity', 0.0)
+                + severity_areas.get('high_severity', 0.0)
+            )
+
             summary = SeveritySummary(
                 unburned_ha=float(severity_areas.get('unburned', 0.0)) / 10000,
                 low_severity_ha=float(severity_areas.get('low_severity', 0.0)) / 10000,
                 moderate_severity_ha=float(severity_areas.get('moderate_severity', 0.0)) / 10000,
                 high_severity_ha=float(severity_areas.get('high_severity', 0.0)) / 10000,
-                total_affected_ha=float(gdf_projected['area_m2'].sum()) / 10000
+                total_affected_ha=affected_area_m2 / 10000
             )
-            
-            total_area_m2 = gdf_projected['area_m2'].sum()
             
             return BurnedAreaResult(
                 event_id="unknown",
-                area_ha=float(total_area_m2) / 10000,
-                area_m2=float(total_area_m2),
+                area_ha=affected_area_m2 / 10000,
+                area_m2=affected_area_m2,
                 projection_used="EPSG:6933",
                 method="polygon_area",
                 uncertainty="low",
@@ -245,7 +253,9 @@ class BurnedAreaMapper:
         self,
         pre_scene_path: Optional[str],
         post_scene_path: str,
-        event_id: str
+        event_id: str,
+        center_lon: float = 92.0,
+        center_lat: float = 56.0
     ) -> Tuple[Dict[str, Any], BurnedAreaResult]:
         """
         Обработать пару снимков Sentinel-2
@@ -253,47 +263,76 @@ class BurnedAreaMapper:
         Returns:
             (GeoJSON полигонов, BurnedAreaResult)
         """
-        # Заглушка для реальной реализации
-        # В реальности здесь будет загрузка растров через rasterio
-        
-        logger.warning("Using fixture/mock data for burned area calculation")
-        
-        # Создаем фиктивный результат
-        mock_geojson = {
-            "type": "FeatureCollection",
-            "features": [{
+        fixture_path = Path(post_scene_path)
+        if fixture_path.is_dir():
+            fixture_path = fixture_path / "dNBR.json"
+        if not fixture_path.exists():
+            fixture_path = Path("data/fixtures/sentinel2/dNBR.json")
+
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        dnbr = np.asarray(payload["matrix"], dtype=np.float32)
+        pixel_size_m = float(payload.get("pixel_size_m", 20))
+        ha_per_pixel = float(payload.get("ha_per_pixel", (pixel_size_m * pixel_size_m) / 10000))
+        severity = await self.classify_severity(dnbr)
+
+        low_ha = float(np.count_nonzero(severity == 1) * ha_per_pixel)
+        moderate_ha = float(np.count_nonzero(severity == 2) * ha_per_pixel)
+        high_ha = float(np.count_nonzero(severity == 3) * ha_per_pixel)
+        total_ha = low_ha + moderate_ha + high_ha
+
+        features = []
+        class_specs = [
+            (1, "low_severity", "#ffcc00", low_ha),
+            (2, "moderate_severity", "#ff8800", moderate_ha),
+            (3, "high_severity", "#ff0000", high_ha),
+        ]
+        cursor = -0.5
+        for class_value, severity_name, color, area_ha in class_specs:
+            if area_ha <= 0:
+                continue
+            side_km = math.sqrt(area_ha / 100.0)
+            dlat = side_km / 111.32
+            dlon = side_km / (111.32 * max(math.cos(math.radians(center_lat)), 0.2))
+            offset = cursor * dlon * 1.4
+            cursor += 1
+            coords = [[
+                [center_lon + offset - dlon / 2, center_lat - dlat / 2],
+                [center_lon + offset + dlon / 2, center_lat - dlat / 2],
+                [center_lon + offset + dlon / 2, center_lat + dlat / 2],
+                [center_lon + offset - dlon / 2, center_lat + dlat / 2],
+                [center_lon + offset - dlon / 2, center_lat - dlat / 2],
+            ]]
+            features.append({
                 "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [-122.5, 37.8],
-                        [-122.4, 37.8],
-                        [-122.4, 37.9],
-                        [-122.5, 37.9],
-                        [-122.5, 37.8]
-                    ]]
-                },
+                "geometry": {"type": "Polygon", "coordinates": coords},
                 "properties": {
-                    "severity": "moderate_severity",
-                    "event_id": event_id
+                    "severity": severity_name,
+                    "class_value": class_value,
+                    "event_id": event_id,
+                    "area_ha": round(area_ha, 2),
+                    "fill": color,
+                    "method": "fixture_dnbr_pixel_count"
                 }
-            }]
-        }
-        
-        mock_result = BurnedAreaResult(
+            })
+
+        geojson = {"type": "FeatureCollection", "features": features}
+
+        result = BurnedAreaResult(
             event_id=event_id,
-            area_ha=125.5,
-            area_m2=1255000.0,
-            projection_used="EPSG:6933",
-            method="polygon_area",
-            uncertainty="medium",
+            area_ha=round(total_ha, 2),
+            area_m2=round(total_ha * 10000, 2),
+            projection_used=payload.get("projection", "EPSG:6933"),
+            method="dNBR_pixel_count",
+            uncertainty="demo_fixture" if "fixtures" in str(fixture_path) else "medium",
             severity_summary=SeveritySummary(
-                unburned_ha=0.0,
-                low_severity_ha=25.0,
-                moderate_severity_ha=75.5,
-                high_severity_ha=25.0,
-                total_affected_ha=125.5
+                unburned_ha=round(float(np.count_nonzero(severity == 0) * ha_per_pixel), 2),
+                low_severity_ha=round(low_ha, 2),
+                moderate_severity_ha=round(moderate_ha, 2),
+                high_severity_ha=round(high_ha, 2),
+                total_affected_ha=round(total_ha, 2)
             )
         )
         
-        return mock_geojson, mock_result
+        return geojson, result

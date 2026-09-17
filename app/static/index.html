@@ -94,21 +94,21 @@
     <div id="map"></div>
     
     <div class="controls">
-        <h3>🔍 Поиск пожаров</h3>
+        <h3>Оперативный мониторинг</h3>
         
         <div class="control-group">
             <label>BBOX (min_lon, min_lat, max_lon, max_lat)</label>
-            <input type="text" id="bbox" value="-125.0,37.0,-120.0,40.0" />
+            <input type="text" id="bbox" value="91.80,55.85,92.20,56.15" />
         </div>
         
         <div class="control-group">
             <label>Дата начала</label>
-            <input type="date" id="start_date" value="2024-01-01" />
+            <input type="date" id="start_date" value="2026-07-15" />
         </div>
         
         <div class="control-group">
             <label>Дата конца</label>
-            <input type="date" id="end_date" value="2024-01-31" />
+            <input type="date" id="end_date" value="2026-07-16" />
         </div>
         
         <div class="control-group">
@@ -120,7 +120,7 @@
             </select>
         </div>
         
-        <button id="analyzeBtn" onclick="analyzeRegion()">🛰 Анализировать</button>
+        <button id="analyzeBtn" onclick="analyzeRegion()">Анализировать</button>
     </div>
     
     <div class="legend">
@@ -151,7 +151,7 @@
     
     <script>
         // Инициализация карты
-        const map = L.map('map').setView([38.5, -122.5], 8);
+        const map = L.map('map').setView([56.0, 92.0], 10);
         
         // Базовая подложка
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -171,7 +171,7 @@
         async function analyzeRegion() {
             const btn = document.getElementById('analyzeBtn');
             btn.disabled = true;
-            btn.textContent = '⏳ Анализ...';
+            btn.textContent = 'Анализ...';
             
             const bbox = document.getElementById('bbox').value;
             const startDate = document.getElementById('start_date').value;
@@ -181,14 +181,26 @@
             try {
                 updateStatus('Загрузка данных о пожарах...');
                 
-                // Запрос к API
-                const url = `/api/v1/fires?bbox=${encodeURIComponent(bbox)}&start_date=${startDate}&end_date=${endDate}${sensor ? '&sensor=' + sensor : ''}`;
-                const response = await fetch(url);
-                const data = await response.json();
+                const sensors = sensor ? [sensor] : ['MODIS', 'VIIRS'];
+                const response = await fetch('/api/v1/fires/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        bbox: bbox.split(',').map(Number),
+                        start_date: startDate,
+                        end_date: endDate,
+                        sensors
+                    })
+                });
+                const result = await response.json();
                 
                 // Очистка слоев
                 firePointsLayer.clearLayers();
                 burnedAreaLayer.clearLayers();
+
+                const url = `/api/v1/fires?bbox=${encodeURIComponent(bbox)}&start_date=${startDate}&end_date=${endDate}${sensor ? '&sensor=' + sensor : ''}`;
+                const pointsResponse = await fetch(url);
+                const data = await pointsResponse.json();
                 
                 // Отображение точек пожаров
                 if (data.features && data.features.length > 0) {
@@ -216,9 +228,31 @@
                         marker.addTo(firePointsLayer);
                     });
                     
-                    updateStatus(`Найдено ${data.total} очагов`);
+                    updateStatus(`Найдено ${data.total} очагов, событий: ${result.events_found}`);
                 } else {
                     updateStatus('Очагов не найдено');
+                }
+
+                if (result.events) {
+                    for (const event of result.events) {
+                        const burnedResponse = await fetch(event.burned_geojson_url);
+                        const burned = await burnedResponse.json();
+                        L.geoJSON(burned, {
+                            style: f => ({
+                                color: '#333',
+                                weight: 1,
+                                fillColor: f.properties.fill || '#ff8800',
+                                fillOpacity: 0.45
+                            }),
+                            onEachFeature: (feature, layer) => {
+                                layer.bindPopup(`
+                                    <strong>Гарь ${feature.properties.severity}</strong><br>
+                                    Площадь: ${feature.properties.area_ha} га<br>
+                                    Событие: ${feature.properties.event_id}
+                                `);
+                            }
+                        }).addTo(burnedAreaLayer);
+                    }
                 }
                 
             } catch (error) {
@@ -226,7 +260,7 @@
                 updateStatus('Ошибка: ' + error.message);
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🛰 Анализировать';
+                btn.textContent = 'Анализировать';
             }
         }
         

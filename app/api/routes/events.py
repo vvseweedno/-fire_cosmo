@@ -15,9 +15,9 @@ _events_store: dict = {}
 @router.get("")
 async def list_events():
     """Получить список всех пожарных событий"""
-    from app.services.fire_clustering import FireClusteringService
-    
-    clustering = FireClusteringService()
+    from app.api.routes.fires import get_services
+
+    _, _, clustering, _ = get_services()
     events = clustering.get_all_events()
     
     return {
@@ -42,9 +42,9 @@ async def list_events():
 @router.get("/{event_id}")
 async def get_event(event_id: str):
     """Получить детали события по ID"""
-    from app.services.fire_clustering import FireClusteringService
-    
-    clustering = FireClusteringService()
+    from app.api.routes.fires import get_services
+
+    _, _, clustering, _ = get_services()
     event = clustering.get_event_by_id(event_id)
     
     if not event:
@@ -79,47 +79,34 @@ async def get_event(event_id: str):
 @router.get("/{event_id}/burned.geojson")
 async def get_burned_area(event_id: str):
     """Получить GeoJSON полигонов гари для события"""
-    # В реальности здесь будет загрузка из БД или кэша
-    
-    # Демонстрационный ответ
-    return {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [-122.5, 37.8],
-                        [-122.4, 37.8],
-                        [-122.4, 37.9],
-                        [-122.5, 37.9],
-                        [-122.5, 37.8]
-                    ]]
-                },
-                "properties": {
-                    "event_id": event_id,
-                    "severity": "moderate_severity",
-                    "area_ha": 125.5
-                }
-            }
-        ]
-    }
+    from app.api.routes.fires import _burned_area_store, get_services
+
+    _, _, clustering, _ = get_services()
+    if not clustering.get_event_by_id(event_id):
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event_id not in _burned_area_store:
+        raise HTTPException(status_code=404, detail="Burned area has not been mapped yet")
+    return _burned_area_store[event_id]
 
 
 @router.get("/{event_id}/report")
 async def get_event_report(event_id: str):
     """Получить полный отчет о событии"""
-    from app.services.fire_clustering import FireClusteringService
     from app.core.schemas import Sentinel2Scene, SeveritySummary
-    
-    clustering = FireClusteringService()
+    from app.api.routes.fires import _report_store, get_services
+
+    _, _, clustering, _ = get_services()
     event = clustering.get_event_by_id(event_id)
     
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     
-    # Формирование отчета
+    burned_area = _report_store.get(event_id)
+    if burned_area is None:
+        raise HTTPException(status_code=404, detail="Burned area has not been mapped yet")
+
+    severity_summary = burned_area.severity_summary or SeveritySummary()
+
     report = EventReport(
         event_id=event_id,
         region_bbox=None,
@@ -136,26 +123,13 @@ async def get_event_report(event_id: str):
             datetime=event.last_seen,
             cloud_cover=8.7
         ) if event.fire_points else None,
-        burned_area=BurnedAreaResult(
-            event_id=event_id,
-            area_ha=event.area_ha or 125.5,
-            area_m2=(event.area_ha or 125.5) * 10000,
-            projection_used="EPSG:6933",
-            method="polygon_area",
-            uncertainty="medium"
-        ),
-        severity_summary=SeveritySummary(
-            unburned_ha=0.0,
-            low_severity_ha=25.0,
-            moderate_severity_ha=75.5,
-            high_severity_ha=25.0,
-            total_affected_ha=event.area_ha or 125.5
-        ),
-        confidence="high",
+        burned_area=burned_area,
+        severity_summary=severity_summary,
+        confidence="medium" if burned_area.uncertainty == "demo_fixture" else "high",
         warnings=[],
         limitations=[
-            "Расчет выполнен на основе фикстурных данных",
-            "Требуется верификация по наземным данным"
+            "Демо-режим использует локальную dNBR-фикстуру вместо скачанного Sentinel-2 raster pair",
+            "Для финальной защиты подключите реальные Sentinel-2 L2A сцены и сохраните их идентификаторы"
         ]
     )
     

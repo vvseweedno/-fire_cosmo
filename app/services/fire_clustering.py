@@ -66,7 +66,7 @@ class FireClusteringService:
     
     async def _process_point(self, point: FireCandidate):
         """Обработать одну точку"""
-        nearby_events = await self._find_nearby_events(point.latitude, point.longitude)
+        nearby_events = await self._find_nearby_events(point.latitude, point.longitude, point.datetime)
         
         if nearby_events:
             # Привязать к ближайшему событию
@@ -76,7 +76,7 @@ class FireClusteringService:
             # Создать новое событие
             await self._create_new_event(point)
     
-    async def _find_nearby_events(self, lat: float, lon: float) -> List[FireEvent]:
+    async def _find_nearby_events(self, lat: float, lon: float, observed_at: datetime) -> List[FireEvent]:
         """Найти события в радиусе с использованием STRTree"""
         if not self.events:
             return []
@@ -86,8 +86,12 @@ class FireClusteringService:
             self._rebuild_event_tree()
         
         # Найти кандидатов в bounding box
+        from math import cos, radians
+
         point = Point(lon, lat)
-        bbox = point.buffer(self.spatial_radius_km / 111)  # ~1 km ≈ 0.009 degrees
+        lat_radius = self.spatial_radius_km / 111.32
+        lon_radius = self.spatial_radius_km / (111.32 * max(cos(radians(lat)), 0.2))
+        bbox = point.buffer(max(lat_radius, lon_radius))
         candidates = self._event_tree.query(bbox)
         
         # Проверить точное расстояние
@@ -97,6 +101,8 @@ class FireClusteringService:
             event = self.events[event_id]
             if event.status != FireStatus.ACTIVE:
                 continue
+            if abs((observed_at - event.last_seen).total_seconds()) > self.temporal_window_hours * 3600:
+                continue
             
             distance = self._haversine_distance(
                 lat, lon,
@@ -105,7 +111,10 @@ class FireClusteringService:
             if distance <= self.spatial_radius_km:
                 nearby.append(event)
         
-        return nearby
+        return sorted(
+            nearby,
+            key=lambda e: self._haversine_distance(lat, lon, e.centroid_lat, e.centroid_lon)
+        )
     
     def _rebuild_event_tree(self):
         """Перестроить пространственный индекс"""
@@ -160,6 +169,7 @@ class FireClusteringService:
         )
         
         self.events[event_id] = event
+        self._event_tree = None
         logger.info(f"Created new event {event_id} at ({point.latitude}, {point.longitude})")
     
     async def _recalculate_centroid(self, event: FireEvent):

@@ -7,6 +7,7 @@ from app.core.schemas import FireCandidate, ConfidenceLevel, FireEvent as FireEv
 from app.adapters.base import BaseFireAdapter
 from app.adapters.modis_adapter import ModisAdapter
 from app.adapters.viirs_adapter import ViirsAdapter
+from app.adapters.landsat_adapter import LandsatAdapter
 
 
 logger = logging.getLogger(__name__)
@@ -34,11 +35,12 @@ class FireDetectionService:
         
         adapters: Dict[str, BaseFireAdapter] = {}
         
-        if firms_api_key:
+        if firms_api_key or offline_mode:
             adapters['MODIS'] = ModisAdapter(api_key=firms_api_key, offline_mode=offline_mode, cache_dir=cache_dir)
             adapters['VIIRS'] = ViirsAdapter(api_key=firms_api_key, offline_mode=offline_mode, cache_dir=cache_dir)
+            adapters['LANDSAT'] = LandsatAdapter(api_key=firms_api_key, offline_mode=offline_mode, cache_dir=cache_dir)
         else:
-            logger.warning("FIRMS API key not set, fire detection will use fixtures only")
+            logger.warning("FIRMS API key not set and offline mode disabled; no thermal adapters enabled")
         
         return cls(adapters=adapters, min_confidence=ConfidenceLevel.NOMINAL)
     

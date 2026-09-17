@@ -1,10 +1,10 @@
 # MODIS Adapter for NASA FIRMS data
+import asyncio
 import logging
 import csv
 from io import StringIO
-from typing import List, Dict, Any
-from datetime import datetime
-from pathlib import Path
+from typing import List
+from datetime import datetime, date
 
 import httpx
 
@@ -21,7 +21,8 @@ class ModisAdapter(BaseFireAdapter):
     def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(**kwargs)
         self.api_key = api_key
-        self.base_url = "https://firms.modaps.eosdis.nasa.gov/api/country"
+        self.base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
+        self.source = "MODIS_NRT"
     
     def get_sensor_type(self) -> str:
         return "MODIS"
@@ -31,7 +32,7 @@ class ModisAdapter(BaseFireAdapter):
         bbox: List[float],
         start_date: str,
         end_date: str,
-        country: str = "USA"  # По умолчанию USA, можно менять
+        country: str = "USA"
     ) -> List[FireCandidate]:
         """
         Загрузить данные MODIS из NASA FIRMS
@@ -48,11 +49,10 @@ class ModisAdapter(BaseFireAdapter):
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                # FIRMS API endpoint для загрузки за период
-                url = f"{self.base_url}/{country}/modis/{start_date}/{end_date}"
-                params = {"key": self.api_key}
-                
-                response = await client.get(url, params=params)
+                day_range = max(1, min(10, (date.fromisoformat(end_date) - date.fromisoformat(start_date)).days + 1))
+                area = ",".join(str(x) for x in bbox)
+                url = f"{self.base_url}/{self.api_key}/{self.source}/{area}/{day_range}/{start_date}"
+                response = await client.get(url)
                 
                 if response.status_code == 429:
                     logger.warning("FIRMS API rate limit, waiting...")
@@ -62,7 +62,7 @@ class ModisAdapter(BaseFireAdapter):
                 response.raise_for_status()
                 
                 # Парсинг CSV ответа
-                return self._parse_csv_response(response.text, bbox)
+                return self._parse_csv_response(response.text, bbox, start_date, end_date)
                 
         except httpx.HTTPError as e:
             self._log_error(f"HTTP error fetching MODIS data", e)
@@ -101,16 +101,8 @@ class ModisAdapter(BaseFireAdapter):
                     if not (bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]):
                         continue
                     
-                    brightness = float(row.get('bright', 0))
-                    confidence_val = row.get('confidence', 'nominal').lower()
-                    
-                    # Маппинг confidence
-                    confidence_map = {
-                        'low': ConfidenceLevel.LOW,
-                        'nominal': ConfidenceLevel.NOMINAL,
-                        'high': ConfidenceLevel.HIGH
-                    }
-                    confidence = confidence_map.get(confidence_val, ConfidenceLevel.NOMINAL)
+                    brightness = float(row.get('brightness') or row.get('bright') or 0)
+                    confidence = self._parse_confidence(row.get('confidence', 'nominal'))
                     
                     # Парсинг даты
                     acq_date = row.get('acq_date', '2024-01-01')
@@ -120,6 +112,9 @@ class ModisAdapter(BaseFireAdapter):
                     
                     dt = datetime.strptime(f"{acq_date} {acq_time}", "%Y-%m-%d %H%M")
                     
+                    if not self._date_in_range(dt, start_date, end_date):
+                        continue
+
                     point = FireCandidate(
                         id=f"modis_{row.get('id', i)}",
                         sensor="MODIS",
@@ -131,7 +126,6 @@ class ModisAdapter(BaseFireAdapter):
                         confidence=confidence,
                         daynight=daynight,
                         satellite=satellite,
-                        source="demo_fixture",
                         raw=dict(row)
                     )
                     points.append(point)
@@ -143,7 +137,13 @@ class ModisAdapter(BaseFireAdapter):
         logger.info(f"Loaded {len(points)} MODIS points from fixture")
         return points
     
-    def _parse_csv_response(self, csv_data: str, bbox: List[float]) -> List[FireCandidate]:
+    def _parse_csv_response(
+        self,
+        csv_data: str,
+        bbox: List[float],
+        start_date: str = "0001-01-01",
+        end_date: str = "9999-12-31"
+    ) -> List[FireCandidate]:
         """Распарсить CSV ответ от FIRMS"""
         points = []
         reader = csv.DictReader(StringIO(csv_data))
@@ -157,16 +157,8 @@ class ModisAdapter(BaseFireAdapter):
                 if not (bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]):
                     continue
                 
-                brightness = float(row.get('brightness', 0))
-                confidence_val = row.get('confidence', 'nominal').lower()
-                
-                # Маппинг confidence
-                confidence_map = {
-                    'low': ConfidenceLevel.LOW,
-                    'nominal': ConfidenceLevel.NOMINAL,
-                    'high': ConfidenceLevel.HIGH
-                }
-                confidence = confidence_map.get(confidence_val, ConfidenceLevel.NOMINAL)
+                brightness = float(row.get('brightness') or row.get('bright') or 0)
+                confidence = self._parse_confidence(row.get('confidence', 'nominal'))
                 
                 # Парсинг даты
                 acq_date = row.get('acq_date', '2024-01-01')
@@ -176,6 +168,9 @@ class ModisAdapter(BaseFireAdapter):
                 
                 dt = datetime.strptime(f"{acq_date} {acq_time}", "%Y-%m-%d %H%M")
                 
+                if not self._date_in_range(dt, start_date, end_date):
+                    continue
+
                 point = FireCandidate(
                     id=f"modis_{row.get('id', len(points))}",
                     sensor="MODIS",
@@ -196,3 +191,24 @@ class ModisAdapter(BaseFireAdapter):
                 continue
         
         return points
+
+    def _parse_confidence(self, value: str | int | float | None) -> ConfidenceLevel:
+        text = str(value or "").strip().lower()
+        if text in {"h", "high"}:
+            return ConfidenceLevel.HIGH
+        if text in {"n", "nominal"}:
+            return ConfidenceLevel.NOMINAL
+        if text in {"l", "low"}:
+            return ConfidenceLevel.LOW
+        try:
+            numeric = float(text)
+        except ValueError:
+            return ConfidenceLevel.NOMINAL
+        if numeric >= 0.8 or numeric >= 80:
+            return ConfidenceLevel.HIGH
+        if numeric >= 0.3 or numeric >= 30:
+            return ConfidenceLevel.NOMINAL
+        return ConfidenceLevel.LOW
+
+    def _date_in_range(self, dt: datetime, start_date: str, end_date: str) -> bool:
+        return date.fromisoformat(start_date) <= dt.date() <= date.fromisoformat(end_date)

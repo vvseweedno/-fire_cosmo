@@ -40,22 +40,19 @@ RUN export CPLUS_INCLUDE_PATH=$(gdal-config --cflags) \
 # Set working directory
 WORKDIR ${APP_HOME}
 
-# Copy dependency files first for better caching
-COPY pyproject.toml .
-
-# Install Python dependencies
-# Note: rasterio, geopandas will compile against system GDAL
-RUN pip install --upgrade pip && \
-    pip install -e ".[dev]"
-
-# Copy application code
+# Copy application code before editable install
+COPY pyproject.toml README.md ./
 COPY app/ ./app/
-COPY static/ ./static/
 COPY config/ ./config/
 COPY scripts/ ./scripts/
 COPY data/fixtures/ ./data/fixtures/
 COPY tests/ ./tests/
 COPY .env.example ./.env
+
+# Install Python dependencies
+# Note: rasterio, geopandas will compile against system GDAL
+RUN pip install --upgrade pip && \
+    pip install -e ".[dev]"
 
 # Create necessary directories for runtime data
 RUN mkdir -p ${CACHE_DIR} ${OUTPUT_DIR} && \
