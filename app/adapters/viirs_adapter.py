@@ -48,7 +48,6 @@ class ViirsAdapter(BaseFireAdapter):
             if response.status_code != 429:
                 response.raise_for_status()
                 return response.text
-
             retry_after = response.headers.get("Retry-After")
             try:
                 delay = float(retry_after) if retry_after else float(2**attempt)
@@ -57,7 +56,6 @@ class ViirsAdapter(BaseFireAdapter):
             delay = min(max(delay, 0.5), 10.0)
             logger.warning("FIRMS VIIRS rate limited; retrying in %.1fs", delay)
             await asyncio.sleep(delay)
-
         logger.error("FIRMS VIIRS remained rate limited after retries")
         return ""
 
@@ -105,13 +103,7 @@ class ViirsAdapter(BaseFireAdapter):
     @staticmethod
     def _stable_id(row: dict, lat: float, lon: float, dt: datetime) -> str:
         identity = "|".join(
-            [
-                "VIIRS",
-                f"{lat:.6f}",
-                f"{lon:.6f}",
-                dt.isoformat(),
-                str(row.get("satellite", "")),
-            ]
+            ["VIIRS", f"{lat:.6f}", f"{lon:.6f}", dt.isoformat(), str(row.get("satellite", ""))]
         )
         return "viirs_" + hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
 
@@ -141,7 +133,6 @@ class ViirsAdapter(BaseFireAdapter):
                 lon = float(row["longitude"])
                 if not (bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3]):
                     continue
-
                 brightness = float(row.get("bright_ti4") or row.get("brightness") or row.get("bright") or 0)
                 confidence = self._parse_confidence(row.get("confidence", "nominal"))
                 acq_date = row.get("acq_date", "2024-01-01")
@@ -149,11 +140,11 @@ class ViirsAdapter(BaseFireAdapter):
                 dt = datetime.strptime(f"{acq_date} {acq_time}", "%Y-%m-%d %H%M")
                 if not self._date_in_range(dt, start_date, end_date):
                     continue
-
                 points.append(
                     FireCandidate(
                         id=self._stable_id(row, lat, lon, dt),
                         sensor="VIIRS",
+                        source=self.source,
                         datetime=dt,
                         latitude=lat,
                         longitude=lon,
@@ -181,7 +172,6 @@ class ViirsAdapter(BaseFireAdapter):
             numeric = float(text)
         except ValueError:
             return ConfidenceLevel.NOMINAL
-
         score = numeric * 100.0 if 0.0 <= numeric <= 1.0 else numeric
         if score >= 80.0:
             return ConfidenceLevel.HIGH
