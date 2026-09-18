@@ -1,9 +1,18 @@
-"""Small deterministic training utilities used before heavier ML models are justified."""
+"""Deterministic metric-aware calibration before heavier ML models are trained."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import replace
 
 import numpy as np
 
+from wildfire.calibration import exact_f1_threshold, optimize_ordered_thresholds
+from wildfire.model_config import ModelConfig
+
 
 AFTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
+BSTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
 
 
 def threshold_grid(minimum: float, maximum: float, step: float) -> list[float]:
@@ -18,51 +27,76 @@ def threshold_grid(minimum: float, maximum: float, step: float) -> list[float]:
     return [round(float(value), 10) for value in values]
 
 
-def calibrate_af_threshold(
-    samples,
-    thresholds: list[float],
-    base_config,
-):
-    """Maximise official micro-F1 on the supplied training partition.
+def _materialize_samples(
+    samples: Iterable[tuple[np.ndarray, np.ndarray, np.ndarray]],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    scores: list[np.ndarray] = []
+    targets: list[np.ndarray] = []
+    valid_masks: list[np.ndarray] = []
+    count = 0
+    for score, target, valid in samples:
+        s = np.asarray(score, dtype=np.float32)
+        t = np.asarray(target)
+        v = np.asarray(valid, dtype=bool)
+        if s.shape != t.shape or s.shape != v.shape:
+            raise ValueError("score, target and valid shapes must match")
+        scores.append(s.ravel())
+        targets.append(t.ravel())
+        valid_masks.append(v.ravel())
+        count += 1
+    if not scores:
+        raise ValueError("no training samples were supplied")
+    return (
+        np.concatenate(scores),
+        np.concatenate(targets),
+        np.concatenate(valid_masks),
+        count,
+    )
 
-    The model-side valid mask constrains predictions, but it never removes GT
-    pixels from scoring: official AF evaluation pools all pixels.
-    """
+
+def calibrate_af_threshold_exact(
+    samples: Iterable[AFTrainingSample],
+    base_config: ModelConfig,
+) -> tuple[ModelConfig, dict[str, float | int]]:
+    scores, targets, valid, sample_count = _materialize_samples(samples)
+    best = exact_f1_threshold(scores, targets, valid)
+
+    metadata = dict(base_config.training)
+    metadata["af_threshold_calibration"] = {
+        "method": "exact_micro_f1_sweep_on_train_partition",
+        "samples": sample_count,
+        **best,
+    }
+    calibrated = replace(
+        base_config,
+        af=replace(base_config.af, threshold=float(best["threshold"])),
+        training=metadata,
+    )
+    return calibrated, best
+
+
+def calibrate_af_threshold(
+    samples: Iterable[AFTrainingSample],
+    thresholds: Iterable[float],
+    base_config: ModelConfig,
+) -> tuple[ModelConfig, list[dict[str, float | int]]]:
     candidates = [float(value) for value in thresholds]
     if not candidates:
         raise ValueError("threshold grid is empty")
 
-    counts = {value: {"tp": 0, "fp": 0, "fn": 0} for value in candidates}
-    sample_count = 0
-
-    for score, target, model_valid in samples:
-        score_array = np.asarray(score, dtype=np.float32)
-        target_array = np.asarray(target) > 0
-        valid_array = np.asarray(model_valid, dtype=bool)
-        if score_array.shape != target_array.shape or score_array.shape != valid_array.shape:
-            raise ValueError("score, target and model_valid shapes must match")
-
-        for value in candidates:
-            pred = (score_array >= value) & valid_array
-            truth = target_array
-            counts[value]["tp"] += int(np.count_nonzero(pred & truth))
-            counts[value]["fp"] += int(np.count_nonzero(pred & ~truth))
-            counts[value]["fn"] += int(np.count_nonzero(~pred & truth))
-        sample_count += 1
-
-    if sample_count == 0:
-        raise ValueError("no AF training samples were supplied")
-
+    scores, targets, valid, sample_count = _materialize_samples(samples)
     trace: list[dict[str, float | int]] = []
-    for value in candidates:
-        tp = counts[value]["tp"]
-        fp = counts[value]["fp"]
-        fn = counts[value]["fn"]
-        denom = 2 * tp + fp + fn
-        f1 = 1.0 if denom == 0 else (2.0 * tp) / denom
+    for threshold in candidates:
+        prediction = (scores >= threshold) & valid
+        truth = targets > 0
+        tp = int(np.count_nonzero(prediction & truth))
+        fp = int(np.count_nonzero(prediction & ~truth))
+        fn = int(np.count_nonzero(~prediction & truth))
+        denominator = 2 * tp + fp + fn
+        f1 = 1.0 if denominator == 0 else (2.0 * tp) / denominator
         trace.append(
             {
-                "threshold": value,
+                "threshold": threshold,
                 "f1": f1,
                 "tp": tp,
                 "fp": fp,
@@ -70,39 +104,60 @@ def calibrate_af_threshold(
             }
         )
 
-    default_threshold = base_config.af.threshold
     best = max(
         trace,
         key=lambda row: (
             float(row["f1"]),
-            -abs(float(row["threshold"]) - default_threshold),
+            -int(row["fp"]),
             float(row["threshold"]),
         ),
     )
-    best_threshold = float(best["threshold"])
-
-    training_metadata = dict(base_config.training)
-    training_metadata["af_threshold_calibration"] = {
-        "method": "deterministic_micro_f1_grid_search_on_train_partition",
+    metadata = dict(base_config.training)
+    metadata["af_threshold_calibration"] = {
+        "method": "grid_micro_f1_on_train_partition",
         "samples": sample_count,
-        "best_threshold": best_threshold,
+        "best_threshold": float(best["threshold"]),
         "best_f1_train": float(best["f1"]),
         "trace": trace,
     }
-    calibrated_af = type(base_config.af)(
-        threshold=best_threshold,
-        z4_weight=base_config.af.z4_weight,
-        z5_weight=base_config.af.z5_weight,
-        local_anomaly_weight=base_config.af.local_anomaly_weight,
-        i3_sunglint_penalty=base_config.af.i3_sunglint_penalty,
-        water_snow_penalty=base_config.af.water_snow_penalty,
-        built_penalty=base_config.af.built_penalty,
-        bare_penalty=base_config.af.bare_penalty,
-    )
-    calibrated = type(base_config)(
-        version=base_config.version,
-        af=calibrated_af,
-        bs=base_config.bs,
-        training=training_metadata,
+    calibrated = replace(
+        base_config,
+        af=replace(base_config.af, threshold=float(best["threshold"])),
+        training=metadata,
     )
     return calibrated, trace
+
+
+def calibrate_bs_thresholds(
+    samples: Iterable[BSTrainingSample],
+    base_config: ModelConfig,
+    *,
+    max_candidates: int = 64,
+    passes: int = 3,
+) -> tuple[ModelConfig, dict[str, object]]:
+    scores, targets, valid, sample_count = _materialize_samples(samples)
+    result = optimize_ordered_thresholds(
+        scores,
+        targets,
+        valid,
+        initial=base_config.bs.default_thresholds,
+        max_candidates=max_candidates,
+        passes=passes,
+    )
+    thresholds = tuple(float(value) for value in result["thresholds"])
+
+    bs = replace(
+        base_config.bs,
+        default_thresholds=thresholds,
+        natural_open_thresholds=thresholds,
+        crop_thresholds=thresholds,
+        forest_thresholds=thresholds,
+    )
+    metadata = dict(base_config.training)
+    metadata["bs_threshold_calibration"] = {
+        "method": "ordered_coordinate_search_on_competition_bs_subscore",
+        "samples": sample_count,
+        **result,
+    }
+    calibrated = replace(base_config, bs=bs, training=metadata)
+    return calibrated, result

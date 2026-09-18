@@ -1,5 +1,5 @@
 from wildfire.metadata import ChipMeta
-from wildfire.split import build_group_split
+from wildfire.split import build_group_folds, build_group_split
 
 
 def _item(chip_id: str, kind: str, event: str | None) -> ChipMeta:
@@ -42,3 +42,29 @@ def test_missing_event_id_falls_back_to_individual_chip_group():
     }
     split = build_group_split(meta, validation_fraction=0.5, seed=3)
     assert set(split["train"]) | set(split["validation"]) == set(meta)
+
+
+def test_group_folds_are_leakage_safe_and_cover_all_chips_once():
+    meta = {}
+    for index in range(12):
+        event = f"event_{index // 2}"
+        kind = "af" if index % 3 else "bs"
+        meta[f"chip_{index}"] = _item(f"chip_{index}", kind, event)
+
+    manifest = build_group_folds(meta, n_splits=3, seed=42)
+    seen_validation: set[str] = set()
+    chip_to_fold: dict[str, int] = {}
+
+    for fold in manifest["folds"]:
+        train = set(fold["train"])
+        validation = set(fold["validation"])
+        assert train.isdisjoint(validation)
+        assert train | validation == set(meta)
+        assert seen_validation.isdisjoint(validation)
+        seen_validation |= validation
+        for chip_id in validation:
+            chip_to_fold[chip_id] = fold["fold"]
+
+    assert seen_validation == set(meta)
+    for left, right in (("chip_0", "chip_1"), ("chip_2", "chip_3"), ("chip_4", "chip_5")):
+        assert chip_to_fold[left] == chip_to_fold[right]

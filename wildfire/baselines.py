@@ -33,7 +33,6 @@ def active_fire_score(
     channels: dict[str, np.ndarray],
     config: ModelConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return AF decision score and the model-side valid mask."""
     cfg = (config or ModelConfig()).af
     i4 = np.asarray(channels["I4"], dtype=np.float32)
     i5 = np.asarray(channels["I5"], dtype=np.float32)
@@ -73,11 +72,48 @@ def predict_active_fire(
     *,
     threshold: float | None = None,
 ) -> np.ndarray:
-    """VIIRS active-fire baseline using MIR/TIR contrast and spatial anomaly."""
     resolved = config or ModelConfig()
     score, valid = active_fire_score(channels, resolved)
     decision_threshold = resolved.af.threshold if threshold is None else float(threshold)
     return ((score >= decision_threshold) & valid).astype(np.uint8)
+
+
+def burn_severity_score(
+    channels: dict[str, np.ndarray],
+    config: ModelConfig | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Continuous BS score and the pixels where this baseline can predict."""
+    resolved = config or ModelConfig()
+    score = dnbr(
+        channels["B8A_PRE"],
+        channels["B12_PRE"],
+        channels["B8A_POST"],
+        channels["B12_POST"],
+    )
+    valid = _valid_mask(channels, score.shape)
+    for key in ("SCL_PRE", "SCL_POST"):
+        if key in channels:
+            valid &= ~np.isin(np.asarray(channels[key]), list(INVALID_SCL))
+
+    if "LANDCOVER" in channels:
+        landcover = np.asarray(channels["LANDCOVER"])
+        valid &= ~np.isin(landcover, [LC_WATER, LC_SNOW, LC_BUILT])
+
+    adjusted = score.copy()
+    if "VH_PRE" in channels and "VH_POST" in channels:
+        sar_delta = robust_z(
+            np.asarray(channels["VH_PRE"], dtype=np.float32)
+            - np.asarray(channels["VH_POST"], dtype=np.float32),
+            valid,
+        )
+        adjusted += resolved.bs.sar_weight * np.clip(
+            sar_delta,
+            0.0,
+            resolved.bs.sar_clip,
+        )
+
+    adjusted = np.where(np.isfinite(adjusted), adjusted, -np.inf)
+    return adjusted.astype(np.float32, copy=False), valid
 
 
 def _threshold_arrays(
@@ -113,43 +149,15 @@ def predict_burn_severity(
     channels: dict[str, np.ndarray],
     config: ModelConfig | None = None,
 ) -> np.ndarray:
-    """Sentinel-2 dNBR baseline with SCL and land-cover-aware thresholds."""
     resolved = config or ModelConfig()
-    d = dnbr(
-        channels["B8A_PRE"],
-        channels["B12_PRE"],
-        channels["B8A_POST"],
-        channels["B12_POST"],
-    )
-    valid = _valid_mask(channels, d.shape)
-    for key in ("SCL_PRE", "SCL_POST"):
-        if key in channels:
-            valid &= ~np.isin(np.asarray(channels[key]), list(INVALID_SCL))
-
+    score, valid = burn_severity_score(channels, resolved)
     landcover = channels.get("LANDCOVER")
-    low, moderate, high = _threshold_arrays(landcover, d.shape, resolved)
+    low, moderate, high = _threshold_arrays(landcover, score.shape, resolved)
 
-    adjusted = d.copy()
-    if "VH_PRE" in channels and "VH_POST" in channels:
-        sar_delta = robust_z(
-            np.asarray(channels["VH_PRE"], dtype=np.float32)
-            - np.asarray(channels["VH_POST"], dtype=np.float32),
-            valid,
-        )
-        adjusted += resolved.bs.sar_weight * np.clip(
-            sar_delta,
-            0.0,
-            resolved.bs.sar_clip,
-        )
-
-    result = np.zeros(d.shape, dtype=np.uint8)
-    result[(adjusted >= low) & valid] = 1
-    result[(adjusted >= moderate) & valid] = 2
-    result[(adjusted >= high) & valid] = 3
-
-    if landcover is not None:
-        lc = np.asarray(landcover)
-        result[np.isin(lc, [LC_WATER, LC_SNOW, LC_BUILT])] = 0
+    result = np.zeros(score.shape, dtype=np.uint8)
+    result[(score >= low) & valid] = 1
+    result[(score >= moderate) & valid] = 2
+    result[(score >= high) & valid] = 3
     return result
 
 
