@@ -30,6 +30,8 @@ from pathlib import Path
 import numpy as np
 
 from inference import run as run_inference
+from scripts.analyze_candidate_diversity import run as analyze_candidate_diversity
+from scripts.analyze_errors import run as analyze_errors
 from scripts.generate_af_candidate_oof import run as generate_af_candidate_oof
 from scripts.generate_baseline_oof import run as generate_baseline_oof
 from scripts.generate_bs_candidate_oof import run as generate_bs_candidate_oof
@@ -288,6 +290,48 @@ def _fit_once(
         bs_candidate_report,
     )
 
+    error_analysis: dict[str, object] = {}
+    diversity_analysis: dict[str, object] = {}
+    for task, promotion_key in (("AF", "af"), ("BS", "bs")):
+        task_root = run_dir / "crossfit_predictions" / task
+        baseline_dir = task_root / "baseline"
+        ensemble_dir = task_root / "ensemble"
+        baseline_errors = analyze_errors(
+            baseline_dir,
+            task=task,
+            meta_csv=train_dir / "meta.csv",
+            output=run_dir / "artifacts" / "error_analysis" / f"{task.lower()}_baseline.json",
+        )
+        selected_variant = "ensemble" if promotions[promotion_key] else "baseline"
+        if selected_variant == "baseline":
+            selected_errors = baseline_errors
+        else:
+            selected_errors = analyze_errors(
+                ensemble_dir,
+                task=task,
+                meta_csv=train_dir / "meta.csv",
+                output=(
+                    run_dir
+                    / "artifacts"
+                    / "error_analysis"
+                    / f"{task.lower()}_selected.json"
+                ),
+            )
+        error_analysis[task] = {
+            "selected_variant": selected_variant,
+            "baseline": baseline_errors,
+            "selected": selected_errors,
+        }
+        diversity_analysis[task] = analyze_candidate_diversity(
+            {"BASE": baseline_dir, "ENSEMBLE": ensemble_dir},
+            meta_csv=train_dir / "meta.csv",
+            output=(
+                run_dir
+                / "artifacts"
+                / f"candidate_diversity_{task.lower()}.json"
+            ),
+        )
+
     bs_config_path = run_dir / "bs_deployment_config.json"
     pooled_bs_report: dict[str, object] | None = None
     if promotions["bs"]:
@@ -337,6 +381,8 @@ def _fit_once(
         "bs_candidate_crossfit": bs_candidate_report,
         "pooled_af_ensemble": pooled_af_report,
         "pooled_bs_ensemble": pooled_bs_report,
+        "error_analysis": error_analysis,
+        "candidate_diversity": diversity_analysis,
     }
 
 
