@@ -20,6 +20,11 @@ from wildfire.model_config import ModelConfig
 
 BS_CANDIDATE_NAMES: tuple[str, ...] = (
     "BASE",
+    "CLEAR_SAR_0",
+    "SAR_CLEAR_P005",
+    "SAR_CLEAR_M005",
+    "SAR_CLEAR_P010",
+    "SAR_CLEAR_M010",
     "RBR_Z",
     "RDNBR_Z",
     "DNDVI_Z",
@@ -62,6 +67,32 @@ def burn_score_candidates(
         copy=False,
     )
     candidates: dict[str, np.ndarray] = {"BASE": base_safe}
+
+    # Explicit SAR ablations/candidates. They keep the same cloud fallback and
+    # validity contract as BASE and vary only the clear-pixel SAR contribution.
+    # BASE therefore remains an exact legal fallback while cross-fit can prove
+    # whether zero, positive, negative, weaker or stronger SAR evidence helps.
+    sar_variants = {
+        "CLEAR_SAR_0": 0.0,
+        "SAR_CLEAR_P005": 0.05,
+        "SAR_CLEAR_M005": -0.05,
+        "SAR_CLEAR_P010": 0.10,
+        "SAR_CLEAR_M010": -0.10,
+    }
+    for candidate_name, clear_weight in sar_variants.items():
+        variant, variant_valid = fuse_burn_score(
+            components,
+            clear_sar_weight=clear_weight,
+            cloud_sar_weight=resolved.bs.cloud_sar_weight,
+            sar_clip=resolved.bs.sar_clip,
+        )
+        if not np.array_equal(variant_valid, valid):
+            raise RuntimeError("SAR candidate validity differs from BASE")
+        candidates[candidate_name] = np.where(
+            valid & np.isfinite(variant),
+            variant,
+            0.0,
+        ).astype(np.float32, copy=False)
 
     features = burn_physics_features(channels)
     optical_valid = components.optical_valid & valid
