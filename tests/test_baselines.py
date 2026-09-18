@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 import numpy as np
 
-from wildfire.baselines import predict_active_fire, predict_burn_severity
+from wildfire.baselines import burn_severity_score, predict_active_fire, predict_burn_severity
+from wildfire.model_config import ModelConfig
 
 
 def test_active_fire_finds_strong_local_i4_anomaly():
@@ -36,3 +39,28 @@ def test_burn_severity_masks_cloud_and_water():
     assert pred[0, 1] == 0
     assert pred[0, 2] == 0
     assert pred[1, 2] == 0
+
+
+def test_spectral_consensus_falls_back_when_optional_bands_are_missing():
+    shape = (3, 3)
+    channels = {
+        "B8A_PRE": np.full(shape, 0.7, dtype=np.float32),
+        "B12_PRE": np.full(shape, 0.2, dtype=np.float32),
+        "B8A_POST": np.full(shape, 0.3, dtype=np.float32),
+        "B12_POST": np.full(shape, 0.5, dtype=np.float32),
+    }
+    base = ModelConfig()
+    spectral = replace(
+        base,
+        bs=replace(
+            base.bs,
+            score_recipe="spectral_consensus",
+            index_consensus_weight=0.1,
+        ),
+    )
+
+    base_score, base_valid = burn_severity_score(channels, base)
+    spectral_score, spectral_valid = burn_severity_score(channels, spectral)
+
+    assert np.array_equal(base_valid, spectral_valid)
+    assert np.allclose(base_score, spectral_score)
