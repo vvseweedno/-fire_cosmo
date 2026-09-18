@@ -23,6 +23,7 @@ def main() -> None:
     )
     parser.add_argument("--bs-max-candidates", type=int, default=64)
     parser.add_argument("--bs-passes", type=int, default=3)
+    parser.add_argument("--bs-landcover-passes", type=int, default=2)
     args = parser.parse_args()
 
     manifest = json.loads(Path(args.fold_manifest).read_text(encoding="utf-8"))
@@ -37,6 +38,7 @@ def main() -> None:
         base_config,
         bs_max_candidates=args.bs_max_candidates,
         bs_passes=args.bs_passes,
+        bs_landcover_passes=args.bs_landcover_passes,
     )
 
     report_path = Path(args.report)
