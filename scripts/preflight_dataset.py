@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections import Counter
+import json
 from pathlib import Path
 
 from wildfire.io import discover_chips, infer_task, load_channels
