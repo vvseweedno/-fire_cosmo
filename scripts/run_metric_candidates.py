@@ -54,6 +54,24 @@ def candidate_configs(base: ModelConfig) -> dict[str, ModelConfig]:
                 index_consensus_weight=0.0,
             ),
         ),
+        "sar_cloud_pos_010": replace(
+            base,
+            bs=replace(
+                base.bs,
+                cloud_sar_weight=0.10,
+                score_recipe="dnbr_sar",
+                index_consensus_weight=0.0,
+            ),
+        ),
+        "sar_cloud_neg_010": replace(
+            base,
+            bs=replace(
+                base.bs,
+                cloud_sar_weight=-0.10,
+                score_recipe="dnbr_sar",
+                index_consensus_weight=0.0,
+            ),
+        ),
         "spectral_0025": replace(
             base,
             bs=replace(
@@ -79,6 +97,40 @@ def candidate_configs(base: ModelConfig) -> dict[str, ModelConfig]:
                 score_recipe="spectral_consensus",
                 index_consensus_weight=0.10,
                 cloud_sar_weight=0.0,
+            ),
+        ),
+        # Exact deployable convex score blends. Within this physics family
+        # score = dNBR + w_sar*SAR + w_idx*consensus, so blending two model
+        # scores is equivalent to blending these weights and needs no special
+        # inference runtime.
+        "blend_sar_spectral_025_005": replace(
+            base,
+            bs=replace(
+                base.bs,
+                sar_weight=0.025,
+                cloud_sar_weight=0.0,
+                score_recipe="spectral_consensus",
+                index_consensus_weight=0.05,
+            ),
+        ),
+        "blend_sar_spectral_050_005": replace(
+            base,
+            bs=replace(
+                base.bs,
+                sar_weight=0.05,
+                cloud_sar_weight=0.0,
+                score_recipe="spectral_consensus",
+                index_consensus_weight=0.05,
+            ),
+        ),
+        "blend_sar_spectral_neg050_005": replace(
+            base,
+            bs=replace(
+                base.bs,
+                sar_weight=-0.05,
+                cloud_sar_weight=0.0,
+                score_recipe="spectral_consensus",
+                index_consensus_weight=0.05,
             ),
         ),
     }
@@ -195,7 +247,9 @@ def run(
         "note": (
             "Land-cover thresholds are calibrated inside cross-fit. "
             "Optional spectral indices fall back to the dNBR/SAR score when "
-            "their source bands are absent."
+            "their source bands are absent. Convex SAR/spectral score blends "
+            "are represented exactly as deployable blended weights and pass "
+            "through the same cross-fitted promotion gate."
         ),
     }
     (root / "candidate_sweep.json").write_text(
