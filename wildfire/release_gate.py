@@ -55,10 +55,29 @@ def evaluate_proven_release(
     checks: dict[str, dict[str, Any]] = {}
 
     ci = evidence.get("ci")
-    ci_green = bool(isinstance(ci, dict) and ci.get("green") is True)
-    checks["ci_green"] = {
-        "pass": ci_green,
-        "detail": "CI is explicitly green" if ci_green else "CI green evidence missing/false",
+    ci_bound = False
+    ci_detail = "exact-source CI evidence missing"
+    if isinstance(ci, dict):
+        source_sha = str(ci.get("source_commit_sha") or "")
+        workflow_sha = str(ci.get("workflow_sha") or "")
+        workflow_conclusion = str(ci.get("workflow_conclusion") or "").lower()
+        workflow_run_id = ci.get("workflow_run_id")
+        ci_bound = bool(
+            source_sha
+            and workflow_sha
+            and source_sha == workflow_sha
+            and workflow_conclusion == "success"
+            and workflow_run_id is not None
+        )
+        ci_detail = (
+            f"source_commit_sha={source_sha or 'missing'}, "
+            f"workflow_sha={workflow_sha or 'missing'}, "
+            f"workflow_conclusion={workflow_conclusion or 'missing'}, "
+            f"workflow_run_id={workflow_run_id}"
+        )
+    checks["ci_exact_source_success"] = {
+        "pass": ci_bound,
+        "detail": ci_detail,
     }
 
     preflight = evidence.get("preflight")
@@ -237,11 +256,11 @@ def evaluate_proven_release(
         "status": "PASS" if proven else "FAIL",
         "proven": proven,
         "definition": (
-            "PROVEN requires green CI, official train/test preflight, strict organiser "
-            "event/group leakage separation, a full explicit leakage-audit PASS, valid "
-            "cross-fit metrics, final Score > baseline Score + epsilon, positive "
-            "event-level bootstrap stability, reproducible final runs, strict submission "
-            "validation, and byte-identical submission SHA256."
+            "PROVEN requires successful CI bound to the exact source commit, official "
+            "train/test preflight, strict organiser event/group leakage separation, a full "
+            "explicit leakage-audit PASS, valid cross-fit metrics, final Score > baseline "
+            "Score + epsilon, positive event-level bootstrap stability, reproducible final "
+            "runs, strict submission validation, and byte-identical submission SHA256."
         ),
         "policy": {
             "score_epsilon": score_epsilon,
