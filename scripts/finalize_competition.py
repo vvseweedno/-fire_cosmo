@@ -539,6 +539,7 @@ def run(
             "train": train_preflight,
             "test": test_preflight,
         },
+        "leakage_audit": manifest.get("leakage_audit"),
         "crossfit": {
             "baseline": first["baseline_metrics"],
             "final": first["metrics"],
