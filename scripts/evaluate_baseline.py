@@ -12,6 +12,7 @@ import numpy as np
 from wildfire.baselines import predict
 from wildfire.evaluation import CompetitionEvaluator, evaluation_mask
 from wildfire.io import discover_chips, infer_task, load_channels
+from wildfire.split import read_split_manifest
 
 
 def _chip_metrics(
@@ -43,6 +44,7 @@ def run(
     ignore_value: float | None = None,
     *,
     use_valid_mask: bool = False,
+    selected_chip_ids: set[str] | None = None,
 ) -> dict[str, object]:
     evaluator = CompetitionEvaluator()
     per_chip: list[dict[str, object]] = []
@@ -50,6 +52,16 @@ def run(
     started = perf_counter()
 
     chips = discover_chips(data_dir)
+    if selected_chip_ids is not None:
+        chips = [chip for chip in chips if chip.chip_id in selected_chip_ids]
+        discovered_ids = {chip.chip_id for chip in chips}
+        missing_from_data = sorted(selected_chip_ids - discovered_ids)
+        if missing_from_data:
+            raise RuntimeError(
+                "Split manifest references chips not discovered in data: "
+                + ", ".join(missing_from_data[:10])
+            )
+
     for chip in chips:
         channels = load_channels(chip)
         if "TARGET" not in channels:
@@ -90,7 +102,7 @@ def run(
     summary = evaluator.summary()
     summary.update(
         {
-            "discovered_chips": len(chips),
+            "selected_chips": len(chips),
             "evaluated_chips": len(per_chip),
             "missing_target_chips": missing_target,
             "elapsed_seconds": elapsed,
@@ -115,6 +127,13 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output", default="outputs/baseline_metrics.json")
     parser.add_argument("--ignore-value", type=float, default=None)
+    parser.add_argument("--split-manifest")
+    parser.add_argument(
+        "--partition",
+        choices=("train", "validation"),
+        default="validation",
+        help="Partition to evaluate when --split-manifest is provided.",
+    )
     parser.add_argument(
         "--use-valid-mask",
         action="store_true",
@@ -122,11 +141,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    selected: set[str] | None = None
+    if args.split_manifest:
+        manifest = read_split_manifest(args.split_manifest)
+        selected = set(manifest[args.partition])
+
     report = run(
         args.data_dir,
         args.ignore_value,
         use_valid_mask=args.use_valid_mask,
+        selected_chip_ids=selected,
     )
+    report["partition"] = args.partition if args.split_manifest else "all"
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
