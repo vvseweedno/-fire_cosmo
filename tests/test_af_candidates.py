@@ -126,3 +126,32 @@ def test_hard_negative_context_penalizes_known_landcover_false_positive_contexts
     # and legal for cross-fitted selection rather than becoming a hard rule.
     assert np.isfinite(contextual[valid]).all()
     assert contextual[0, 0] < candidates["I45_Z"][0, 0]
+
+
+def test_persistent_context_candidate_is_neutral_without_explicit_prior():
+    candidates, valid = active_fire_score_candidates(_channels(), ModelConfig())
+
+    assert np.allclose(
+        candidates["HARD_NEG_CONTEXT_PERSISTENT"][valid],
+        candidates["HARD_NEG_CONTEXT"][valid],
+    )
+
+
+def test_persistent_context_candidate_soft_penalizes_recurrent_heat():
+    channels = _channels()
+    prior = np.zeros_like(channels["I4"], dtype=np.float32)
+    prior[2, 2] = 1.0
+    channels["PERSISTENT_HEAT_PRIOR"] = prior
+
+    candidates, valid = active_fire_score_candidates(channels, ModelConfig())
+
+    assert valid[2, 2]
+    assert (
+        candidates["HARD_NEG_CONTEXT_PERSISTENT"][2, 2]
+        < candidates["HARD_NEG_CONTEXT"][2, 2]
+    )
+    assert np.isclose(
+        candidates["HARD_NEG_CONTEXT"][2, 2]
+        - candidates["HARD_NEG_CONTEXT_PERSISTENT"][2, 2],
+        1.5,
+    )
