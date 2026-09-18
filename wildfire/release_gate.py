@@ -93,6 +93,20 @@ def evaluate_proven_release(
         ),
     }
 
+    full_leakage_pass = bool(
+        isinstance(leakage, dict)
+        and leakage.get("pass") is True
+        and str(leakage.get("status", "")).upper() == "PASS"
+    )
+    checks["leakage_audit_pass"] = {
+        "pass": full_leakage_pass,
+        "detail": (
+            "explicit leakage audit is PASS"
+            if full_leakage_pass
+            else f"explicit leakage audit did not pass: {leakage}"
+        ),
+    }
+
     crossfit = evidence.get("crossfit")
     baseline = crossfit.get("baseline") if isinstance(crossfit, dict) else None
     final = crossfit.get("final") if isinstance(crossfit, dict) else None
@@ -224,10 +238,10 @@ def evaluate_proven_release(
         "proven": proven,
         "definition": (
             "PROVEN requires green CI, official train/test preflight, strict organiser "
-            "event/group leakage separation, valid cross-fit metrics, final Score > "
-            "baseline Score + epsilon, positive event-level bootstrap stability, "
-            "reproducible final runs, strict submission validation, and byte-identical "
-            "submission SHA256."
+            "event/group leakage separation, a full explicit leakage-audit PASS, valid "
+            "cross-fit metrics, final Score > baseline Score + epsilon, positive "
+            "event-level bootstrap stability, reproducible final runs, strict submission "
+            "validation, and byte-identical submission SHA256."
         ),
         "policy": {
             "score_epsilon": score_epsilon,
