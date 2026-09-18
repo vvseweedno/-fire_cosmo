@@ -1,6 +1,6 @@
 """Stable evidence describing exactly which dataset tree produced an experiment."""
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import hashlib
 import json
