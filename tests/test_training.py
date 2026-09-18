@@ -1,11 +1,13 @@
 import numpy as np
 
+from wildfire.constants import LC_CROP, LC_TREE
 from wildfire.fusion import BurnFusionComponents
 from wildfire.model_config import ModelConfig
 from wildfire.training import (
     calibrate_af_threshold,
     calibrate_af_threshold_exact,
     calibrate_bs_cloud_sar_fallback,
+    calibrate_bs_landcover_thresholds,
     calibrate_bs_thresholds,
     threshold_grid,
 )
@@ -89,4 +91,29 @@ def test_cloud_sar_optimizer_can_recover_cloudy_severity_pixels():
     )
 
     assert calibrated.bs.cloud_sar_weight == 1.0
+    assert np.isclose(result["bs_subscore"], 0.65)
+
+
+def test_landcover_threshold_refinement_can_recover_crop_severity():
+    score = np.array(
+        [[0.0, 0.15, 0.35, 0.60, 0.0, 0.05, 0.10, 0.15]],
+        dtype=np.float32,
+    )
+    target = np.array([[0, 1, 2, 3, 0, 1, 2, 3]], dtype=np.uint8)
+    valid = np.ones_like(target, dtype=bool)
+    landcover = np.array(
+        [[LC_TREE, LC_TREE, LC_TREE, LC_TREE, LC_CROP, LC_CROP, LC_CROP, LC_CROP]],
+        dtype=np.int16,
+    )
+
+    calibrated, result = calibrate_bs_landcover_thresholds(
+        [(score, target, valid, landcover)],
+        ModelConfig(),
+        max_candidates=32,
+        passes=3,
+    )
+
+    assert calibrated.bs.crop_thresholds != ModelConfig().bs.crop_thresholds
+    assert np.isclose(result["iou_burn"], 1.0)
+    assert np.isclose(result["miou_severity"], 1.0)
     assert np.isclose(result["bs_subscore"], 0.65)
