@@ -9,9 +9,9 @@ missing or optical pixels are invalid.  This gives every candidate the same
 valid-mask contract and makes OOF alignment safe.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
-import numpy as np  # noqa: I001
+import numpy as np
 
 from wildfire.features import burn_physics_features, robust_z
 from wildfire.fusion import burn_fusion_components, fuse_burn_score
