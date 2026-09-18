@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from wildfire.metadata import ChipMeta
 
