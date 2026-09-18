@@ -71,6 +71,12 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "WIND_U10": ("wind_u10", "u10"),
     "WIND_V10": ("wind_v10", "v10"),
     "WIND_SPEED": ("wind_speed",),
+    # Optional aligned temporal recurrence prior for persistent non-wildfire heat.
+    "PERSISTENT_HEAT_PRIOR": (
+        "persistent_heat_prior",
+        "static_heat_prior",
+        "thermal_recurrence",
+    ),
     "TARGET": ("target", "label", "mask", "y"),
 }
 
