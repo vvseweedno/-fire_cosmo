@@ -68,3 +68,30 @@ def test_group_folds_are_leakage_safe_and_cover_all_chips_once():
     assert seen_validation == set(meta)
     for left, right in (("chip_0", "chip_1"), ("chip_2", "chip_3"), ("chip_4", "chip_5")):
         assert chip_to_fold[left] == chip_to_fold[right]
+
+
+def test_strict_group_folds_reject_chip_fallbacks():
+    meta = {
+        "a": _item("a", "af", "event_1"),
+        "b": _item("b", "bs", None),
+        "c": _item("c", "af", "event_2"),
+    }
+    try:
+        build_group_folds(meta, n_splits=2, seed=1, require_event_groups=True)
+    except ValueError as exc:
+        assert "strict leakage-safe split requested" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("strict grouping must reject missing event ids")
+
+
+def test_fold_manifest_reports_leakage_audit():
+    meta = {
+        "a": _item("a", "af", "event_1"),
+        "b": _item("b", "bs", "event_2"),
+        "c": _item("c", "af", None),
+    }
+    manifest = build_group_folds(meta, n_splits=2, seed=1)
+    audit = manifest["leakage_audit"]
+    assert audit["event_grouped_chips"] == 2
+    assert audit["chip_fallbacks"] == 1
+    assert audit["strict_event_grouping"] is False
