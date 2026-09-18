@@ -27,6 +27,9 @@ def _evidence() -> dict[str, object]:
             "n_boot_used": 2000,
             "bootstrap_95_ci": [0.002, 0.020],
             "probability_delta_positive": 0.98,
+            "score_a": final["score"],
+            "score_b": baseline["score"],
+            "delta_score": final["score"] - baseline["score"],
         },
         "reproducibility": {
             "run_1": final,
@@ -81,3 +84,11 @@ def test_proven_release_rejects_chip_level_group_fallback():
     report = evaluate_proven_release(evidence)
     assert report["proven"] is False
     assert report["checks"]["strict_leakage_grouping"]["pass"] is False
+
+
+def test_proven_release_rejects_bootstrap_crossfit_score_mismatch():
+    evidence = _evidence()
+    evidence["bootstrap"]["score_a"] += 0.01
+    report = evaluate_proven_release(evidence)
+    assert report["proven"] is False
+    assert report["checks"]["bootstrap_stability"]["pass"] is False
