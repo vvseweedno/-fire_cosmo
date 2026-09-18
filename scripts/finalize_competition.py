@@ -169,12 +169,15 @@ def _fit_once(
         train_dir,
         fold_manifest,
         candidate_root,
-        model_config=baseline_config_path,
+        model_config=base_config_path,
     )
+    # Cross-fitted candidate comparison must start from the frozen pre-OOF
+    # baseline config. Passing pooled deployment thresholds here would leak
+    # holdout-label information through optimizer initialization.
     candidate_report = crossfit_bs_candidate_ensemble(
         candidate_root,
         manifest,
-        baseline_deployment,
+        base_config,
         alpha_steps=alpha_steps,
         threshold_candidates=ensemble_threshold_candidates,
         threshold_passes=ensemble_threshold_passes,
