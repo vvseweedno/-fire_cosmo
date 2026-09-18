@@ -15,6 +15,12 @@ def test_severity_miou():
     assert np.isclose(severity_miou(pred, target), (1.0 + 0.5 + 0.0) / 3)
 
 
+def test_absent_severity_class_scores_one_per_official_rule():
+    target = np.array([[0, 1]], dtype=np.uint8)
+    pred = np.array([[0, 0]], dtype=np.uint8)
+    assert np.isclose(severity_miou(pred, target), (0.0 + 1.0 + 1.0) / 3)
+
+
 def test_competition_score_weights():
     af = np.array([[0, 1]], dtype=np.uint8)
     bs = np.array([[0, 1, 2, 3]], dtype=np.uint8)

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from wildfire.rle import decode_binary_mask, encode_binary_mask, encode_class
 
@@ -19,3 +20,8 @@ def test_empty_rle():
 def test_class_encoding():
     mask = np.array([[0, 2], [2, 3]], dtype=np.uint8)
     assert encode_class(mask, 2) == "2 2"
+
+
+def test_decoder_rejects_touching_runs():
+    with pytest.raises(ValueError, match="touch"):
+        decode_binary_mask("2 2 4 1", (2, 3))

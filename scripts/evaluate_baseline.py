@@ -26,7 +26,7 @@ def _chip_metrics(
         summary = evaluator.summary()
         return {
             "f1": float(summary["f1_af"]),
-            "pixels_valid": int(np.count_nonzero(valid)),
+            "pixels_scored": int(np.count_nonzero(valid)),
         }
 
     evaluator.update_bs(pred, target, valid)
@@ -34,13 +34,15 @@ def _chip_metrics(
     return {
         "iou_burn": float(summary["iou_burn"]),
         "miou_severity": float(summary["miou_severity"]),
-        "pixels_valid": int(np.count_nonzero(valid)),
+        "pixels_scored": int(np.count_nonzero(valid)),
     }
 
 
 def run(
     data_dir: str | Path,
     ignore_value: float | None = None,
+    *,
+    use_valid_mask: bool = False,
 ) -> dict[str, object]:
     evaluator = CompetitionEvaluator()
     per_chip: list[dict[str, object]] = []
@@ -65,7 +67,12 @@ def run(
                 f"{chip.chip_id}: prediction shape {pred.shape} != target shape {target.shape}"
             )
 
-        valid = evaluation_mask(channels, target, ignore_value)
+        valid = evaluation_mask(
+            channels,
+            target,
+            ignore_value,
+            use_valid_mask=use_valid_mask,
+        )
         if task == "AF":
             evaluator.update_af(pred, target, valid)
         else:
@@ -92,6 +99,11 @@ def run(
                 if per_chip
                 else None
             ),
+            "evaluation_policy": {
+                "micro_averaging": True,
+                "use_valid_mask": use_valid_mask,
+                "ignore_value": ignore_value,
+            },
             "per_chip": per_chip,
         }
     )
@@ -103,9 +115,18 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output", default="outputs/baseline_metrics.json")
     parser.add_argument("--ignore-value", type=float, default=None)
+    parser.add_argument(
+        "--use-valid-mask",
+        action="store_true",
+        help="Research ablation only; official score pools all target pixels.",
+    )
     args = parser.parse_args()
 
-    report = run(args.data_dir, args.ignore_value)
+    report = run(
+        args.data_dir,
+        args.ignore_value,
+        use_valid_mask=args.use_valid_mask,
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

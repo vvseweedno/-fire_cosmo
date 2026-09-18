@@ -18,7 +18,7 @@ def _as_bool_mask(valid: np.ndarray | None, shape: tuple[int, ...]) -> np.ndarra
 
 @dataclass
 class BinaryAccumulator:
-    """Accumulate pixel-level binary confusion counts across chips."""
+    """Accumulate pixel-level binary confusion counts across chips (micro averaging)."""
 
     tp: int = 0
     fp: int = 0
@@ -61,7 +61,7 @@ class BinaryAccumulator:
 
 @dataclass
 class SeverityAccumulator:
-    """Accumulate class-wise intersections/unions for severity classes 1/2/3."""
+    """Micro-aggregate intersections/unions for severity classes 1/2/3."""
 
     classes: tuple[int, ...] = (1, 2, 3)
     intersections: dict[int, int] = field(default_factory=dict)
@@ -90,17 +90,18 @@ class SeverityAccumulator:
             self.intersections[class_id] += int(np.count_nonzero(p_c & t_c))
             self.unions[class_id] += int(np.count_nonzero(p_c | t_c))
 
-    def iou_by_class(self) -> dict[int, float | None]:
-        result: dict[int, float | None] = {}
+    def iou_by_class(self) -> dict[int, float]:
+        result: dict[int, float] = {}
         for class_id in self.classes:
             union = self.unions[class_id]
-            result[class_id] = None if union == 0 else self.intersections[class_id] / union
+            result[class_id] = (
+                1.0 if union == 0 else self.intersections[class_id] / union
+            )
         return result
 
     @property
     def miou(self) -> float:
-        values = [value for value in self.iou_by_class().values() if value is not None]
-        return float(np.mean(values)) if values else 1.0
+        return float(np.mean(list(self.iou_by_class().values())))
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -119,7 +120,7 @@ class SeverityAccumulator:
 
 @dataclass
 class CompetitionEvaluator:
-    """Dataset-level evaluator matching the AF/BS score composition."""
+    """Dataset-level evaluator matching the official AF/BS score composition."""
 
     af: BinaryAccumulator = field(default_factory=BinaryAccumulator)
     burn: BinaryAccumulator = field(default_factory=BinaryAccumulator)
@@ -171,10 +172,16 @@ def evaluation_mask(
     channels: dict[str, np.ndarray],
     target: np.ndarray,
     ignore_value: float | None = None,
+    *,
+    use_valid_mask: bool = False,
 ) -> np.ndarray:
-    """Build an explicit evaluation mask without inventing undocumented nodata rules."""
+    """Build an evaluation mask.
+
+    Official scoring pools all pixels. VALID_MASK is therefore *not* applied by
+    default; it is available only for explicit research ablations.
+    """
     mask = np.isfinite(np.asarray(target))
-    if "VALID_MASK" in channels:
+    if use_valid_mask and "VALID_MASK" in channels:
         valid = np.asarray(channels["VALID_MASK"]) > 0
         if valid.shape != mask.shape:
             raise ValueError("VALID_MASK shape differs from TARGET")

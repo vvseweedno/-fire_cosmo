@@ -19,11 +19,13 @@ def encode_binary_mask(mask: np.ndarray) -> str:
     starts = changes[::2] + 1
     ends = changes[1::2] + 1
     lengths = ends - starts
-    return " ".join(f"{start} {length}" for start, length in zip(starts, lengths, strict=True))
+    return " ".join(
+        f"{start} {length}" for start, length in zip(starts, lengths, strict=True)
+    )
 
 
 def decode_binary_mask(rle: str, shape: tuple[int, int]) -> np.ndarray:
-    """Decode competition RLE into uint8 mask."""
+    """Decode competition RLE and enforce sorted, non-overlapping, non-touching runs."""
     out = np.zeros(shape[0] * shape[1], dtype=np.uint8)
     text = (rle or "").strip()
     if not text:
@@ -33,7 +35,7 @@ def decode_binary_mask(rle: str, shape: tuple[int, int]) -> np.ndarray:
     if len(tokens) % 2:
         raise ValueError("RLE must contain start/length pairs")
 
-    previous_end = 0
+    previous_end: int | None = None
     for start_text, length_text in zip(tokens[::2], tokens[1::2], strict=True):
         start = int(start_text)
         length = int(length_text)
@@ -41,8 +43,8 @@ def decode_binary_mask(rle: str, shape: tuple[int, int]) -> np.ndarray:
             raise ValueError("RLE starts and lengths must be positive")
         zero_start = start - 1
         end = zero_start + length
-        if zero_start < previous_end:
-            raise ValueError("RLE runs overlap or are not sorted")
+        if previous_end is not None and zero_start <= previous_end:
+            raise ValueError("RLE runs overlap, touch, or are not sorted")
         if end > out.size:
             raise ValueError("RLE run exceeds mask size")
         out[zero_start:end] = 1

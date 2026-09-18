@@ -1,4 +1,4 @@
-"""Competition-oriented pixel metrics."""
+"""Competition-oriented pixel metrics matching the official case definition."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def severity_miou(
     target: np.ndarray,
     classes: tuple[int, ...] = (1, 2, 3),
 ) -> float:
-    """Mean IoU over severity classes; absent-in-both classes do not inflate the score."""
+    """Official mIoU: an absent-in-both class has IoU=1, then all 3 classes are averaged."""
     p = np.asarray(pred)
     t = np.asarray(target)
     if p.shape != t.shape:
@@ -45,10 +45,11 @@ def severity_miou(
         t_c = t == class_id
         union = int(np.count_nonzero(p_c | t_c))
         if union == 0:
+            values.append(1.0)
             continue
         intersection = int(np.count_nonzero(p_c & t_c))
         values.append(intersection / union)
-    return float(np.mean(values)) if values else 1.0
+    return float(np.mean(values))
 
 
 def competition_score(
