@@ -41,11 +41,12 @@ Private-test block geometry намеренно отсутствует и не р
 
 ## Текущий accuracy-core
 
-- официальный micro-metric evaluator;
+- единый canonical evaluator для рабочей composite metric;
 - strict template-driven RLE/submission;
 - raw archive inspector, strict dataset preflight и dataset profiler;
 - metadata-safe split-band / multiband GeoTIFF / NPZ channel loading без угадывания порядка каналов;
 - exact AF threshold optimization;
+- metric-gated AF hard-negative candidates, включая optional persistent-heat recurrence prior;
 - ordered BS threshold optimization напрямую по weighted competition subscore;
 - metric-safe land-cover-specific BS threshold refinement с global-score fallback;
 - NBR/dNBR, RBR, RdNBR, NDVI/NDMI, NBR2, MIRBI, BAIS2, temporal/SAR deltas;
@@ -59,6 +60,10 @@ Private-test block geometry намеренно отсутствует и не р
 - monotonic greedy convex OOF ensemble search;
 - versioned model config;
 - reproducible train.py / inference.py;
+- deterministic dataset fingerprint + explicit leakage audit;
+- machine-readable experiment registry;
+- strict organizer/public AOI parser + truthful operational sensor capabilities;
+- CRS-safe burned-area hectares for projected metric rasters;
 - CI: Ruff + compile + pytest + API smoke + Docker.
 
 ## Что математически гарантировано конструкцией
@@ -133,15 +138,21 @@ PROVEN**. После него должен существовать `final_run/a
 ```bash
 python scripts/verify_proven_release.py \
   --evidence final_run/artifacts/release_evidence.json \
+  --workflow-run-id <GITHUB_ACTIONS_RUN_ID> \
+  --workflow-sha <EXACT_SOURCE_COMMIT_SHA> \
+  --workflow-conclusion success \
   --output final_run/artifacts/final_validation.json
 ```
 
 Инженерный контракт закрытия:
 
 ```text
-CI = green
-AND official preflight = pass
+workflow_conclusion = success
+AND workflow_sha = source_commit_sha
+AND workflow_run_id is attached
+AND labelled-data preflight = pass
 AND strict organiser event grouping = pass
+AND explicit leakage audit = PASS
 AND cross-fit metrics exist
 AND final Score > baseline Score + epsilon
 AND bootstrap/stability acceptable
@@ -163,6 +174,9 @@ train-chip. Опция `--allow-chip-fallback` оставлена только �
 - `final_run/submission.csv`;
 - `final_run/bootstrap_final_vs_baseline.json`;
 - `final_run/artifacts/freeze_manifest.json`;
+- `final_run/artifacts/data_audit.json`;
+- `final_run/artifacts/leakage_audit.json`;
+- `final_run/artifacts/experiments/<experiment_id>.json`;
 - `final_run/artifacts/release_evidence.json`;
 - `final_run/artifacts/final_validation.json`.
 
@@ -256,5 +270,10 @@ python scripts/validate_submission.py \
 - docs/CLOUD_AWARE_FUSION.md
 - docs/ENSEMBLE_OPTIMIZATION.md
 - docs/VALIDATION_PROTOCOL.md
+- docs/EXPERIMENT_PROTOCOL.md
+- docs/ERROR_ANALYSIS.md
+- docs/OFFICIAL_DATA_CONTRACT.md
+- docs/ORGANIZER_DATA_EVIDENCE.md
+- docs/OPERATIONAL_ARCHITECTURE.md
 - docs/ZIP_MATH_TRANSFER.md
 - docs/ACCURACY_GUARANTEES.md
