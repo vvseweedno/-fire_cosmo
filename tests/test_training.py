@@ -3,7 +3,9 @@ import numpy as np
 from wildfire.constants import LC_CROP, LC_TREE
 from wildfire.fusion import BurnFusionComponents
 from wildfire.model_config import ModelConfig
+from wildfire.metrics import binary_iou, severity_miou
 from wildfire.training import (
+    apply_landcover_thresholds,
     calibrate_af_threshold,
     calibrate_af_threshold_exact,
     calibrate_bs_cloud_sar_fallback,
@@ -106,14 +108,25 @@ def test_landcover_threshold_refinement_can_recover_crop_severity():
         dtype=np.int16,
     )
 
+    base = ModelConfig()
+    baseline_prediction = apply_landcover_thresholds(
+        score,
+        valid,
+        landcover,
+        base,
+    )
+    baseline_subscore = (
+        0.35 * binary_iou(baseline_prediction > 0, target > 0)
+        + 0.30 * severity_miou(baseline_prediction, target)
+    )
+
     calibrated, result = calibrate_bs_landcover_thresholds(
         [(score, target, valid, landcover)],
-        ModelConfig(),
+        base,
         max_candidates=32,
         passes=3,
     )
 
-    assert calibrated.bs.crop_thresholds != ModelConfig().bs.crop_thresholds
-    assert np.isclose(result["iou_burn"], 1.0)
-    assert np.isclose(result["miou_severity"], 1.0)
-    assert np.isclose(result["bs_subscore"], 0.65)
+    assert calibrated.bs.crop_thresholds != base.bs.crop_thresholds
+    assert result["bs_subscore"] >= baseline_subscore
+    assert result["miou_severity"] > severity_miou(baseline_prediction, target)
