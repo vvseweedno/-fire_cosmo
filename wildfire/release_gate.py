@@ -77,6 +77,22 @@ def evaluate_proven_release(
         "detail": f"train={train_ok}, test={test_ok}",
     }
 
+    leakage = evidence.get("leakage_audit")
+    strict_grouping = bool(
+        isinstance(leakage, dict)
+        and leakage.get("strict_event_grouping") is True
+        and int(leakage.get("chip_fallbacks", -1)) == 0
+        and float(leakage.get("event_group_coverage", 0.0)) >= 1.0
+    )
+    checks["strict_leakage_grouping"] = {
+        "pass": strict_grouping,
+        "detail": (
+            "all chips use organiser event/group ids"
+            if strict_grouping
+            else f"strict organiser grouping unavailable: {leakage}"
+        ),
+    }
+
     crossfit = evidence.get("crossfit")
     baseline = crossfit.get("baseline") if isinstance(crossfit, dict) else None
     final = crossfit.get("final") if isinstance(crossfit, dict) else None
@@ -186,10 +202,11 @@ def evaluate_proven_release(
         "status": "PASS" if proven else "FAIL",
         "proven": proven,
         "definition": (
-            "PROVEN requires green CI, official train/test preflight, valid cross-fit "
-            "metrics, final Score > baseline Score + epsilon, positive event-level "
-            "bootstrap stability, reproducible final runs, strict submission "
-            "validation, and byte-identical submission SHA256."
+            "PROVEN requires green CI, official train/test preflight, strict organiser "
+            "event/group leakage separation, valid cross-fit metrics, final Score > "
+            "baseline Score + epsilon, positive event-level bootstrap stability, "
+            "reproducible final runs, strict submission validation, and byte-identical "
+            "submission SHA256."
         ),
         "policy": {
             "score_epsilon": score_epsilon,
