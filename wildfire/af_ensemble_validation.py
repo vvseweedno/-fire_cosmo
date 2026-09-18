@@ -209,11 +209,11 @@ def crossfit_af_candidate_ensemble(
         "baseline_f1": baseline_acc.f1,
         "delta_f1": delta_f1,
         "delta_total_score": 0.35 * delta_f1,
-        "promotion_allowed": delta_f1 > 0.0,
+        "promotion_epsilon": epsilon,\n        "promotion_allowed": delta_f1 > epsilon,
         "ensemble_counts": ensemble_acc.as_dict(),
         "baseline_counts": baseline_acc.as_dict(),
         "note": (
             "BS is unchanged, so delta_total_score is exactly 0.35 * delta_f1. "
-            "Each fold tunes weights and threshold only on the other folds."
+            "Each fold tunes weights and threshold only on the other folds. " \\n            f"Promotion additionally requires delta_f1 > {epsilon:g}."
         ),
     }
