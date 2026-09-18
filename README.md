@@ -1,18 +1,43 @@
 # Ready Prototype — КосмоХакатон 2026
 
-Competition-first решение для кейса «Мониторинг природных пожаров».
+Competition-first решение для кейса «Оперативный мониторинг лесных пожаров».
 
-Ветка строится вокруг официальной метрики и принципа: новая идея остаётся в
-competition core только после честного leakage-safe измерения.
+Публичный контракт кейса — двухэтапный сервис: тепловые ДЗЗ-наблюдения
+(MODIS/VIIRS/Landsat) для поиска активного горения с отсевом ложных
+срабатываний, затем Sentinel-2 для картирования гарей и оценки поражения.
+Результат — веб-сервис/API с картой и площадью гари.
 
-## Целевая функция
+Ветка сохраняет metric-driven principle: новая идея остаётся в accuracy core
+только после честного leakage-safe измерения.
+
+## Рабочая evaluation objective
+
+Текущий competition spec репозитория использует:
 
 Score = 0.35 * F1_AF + 0.35 * IoU_burn + 0.30 * mIoU_severity
 
-AF: VIIRS I1..I5 + контекст → binary fire mask.
+Эта формула остаётся основной внутренней целью model-selection, но публичная
+страница кейса и доступный AOI-пакет сами по себе её не подтверждают. Перед
+публичным названием формулы «официальной» источник scoring rules должен быть
+зафиксирован в release evidence.
 
-BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
-0/1/2/3 burn severity.
+AF: реализованный VIIRS I1..I5 contextual core → binary fire mask.
+
+BS: реализованный Sentinel-2 pre/post physics core + optional
+Sentinel-1/SCL/terrain/land-cover context → internal 0/1/2/3 severity mask.
+
+## Фактически доступный organizer AOI
+
+В подключённом пакете `Мониторинг DATA/fire-aoi` обнаружен AOI для
+самостоятельной работы со спутниковыми наблюдениями, а не готовый размеченный
+train/test chip dataset. Строгая проверка локальной копии:
+
+```bash
+python scripts/inspect_aoi.py --geojson fire_monitoring_aoi.geojson \
+  --output artifacts/aoi_audit.json
+```
+
+Private-test block geometry намеренно отсутствует и не реконструируется.
 
 ## Текущий accuracy-core
 
@@ -52,7 +77,7 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 Эти свойства относятся к оптимизационному/валидационному протоколу. Они не
 являются обещанием hidden-test результата.
 
-## Что остаётся гипотезой до official train
+## Что остаётся гипотезой до размеченной official/organizer validation
 
 - learned cloud-aware optical/SAR/context router;
 - bi-temporal attention U-Net;
@@ -66,7 +91,7 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 
 Каждый пункт обязан пройти cross-fitted OOF и event-level bootstrap.
 
-## Рабочий цикл после получения official train
+## Рабочий цикл после получения размеченных organizer/evaluation данных
 
 1. scripts/inspect_dataset.py — layout, scaling, dtype, channel ordering.
 2. scripts/profile_dataset.py — class balance, ranges, nodata, SCL/cloud stats.
@@ -84,7 +109,7 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 
 ## Финальный release gate
 
-Для финальной сборки на official train/test запускается один воспроизводимый
+Для финальной сборки при наличии подтверждённых labelled train/test запускается один воспроизводимый
 pipeline:
 
 ```bash
@@ -141,7 +166,7 @@ train-chip. Опция `--allow-chip-fallback` оставлена только �
 - `final_run/artifacts/release_evidence.json`;
 - `final_run/artifacts/final_validation.json`.
 
-## Metric-max workflow на official train
+## Metric-max workflow на подтверждённых labelled data
 
 Ниже — путь, который должен пройти финальный конфиг. Он не использует
 геопривязку/даты private test и не подключает готовые продукты пожаров.
@@ -209,13 +234,13 @@ python scripts/validate_submission.py \
 `*.bands.json` / `*.channels.json`. Неоднозначный multiband raster вызывает
 ошибку вместо тихого чтения band 1.
 
-### Что значит «максимум по метрике»
+### Что значит «максимум по рабочей метрике»
 
-40/40 в разделе метрики получает решение с лучшим private Score среди валидных
-решений после линейной нормализации организаторов. Репозиторий поэтому
-оптимизирует не «баллы из 40» напрямую, а официальный Score и одновременно
-защищает валидность submission. Ни одна локальная/OOF цифра не объявляется
-гарантией hidden-test результата.
+При наличии подтверждённого machine-scored evaluation репозиторий оптимизирует
+рабочий composite Score, а не визуальную привлекательность модели. Пока
+организаторский scoring contract не приложен к release evidence, никакая
+локальная/OOF цифра не объявляется официальным баллом или гарантией результата
+жюри/private test.
 
 ## Исследовательские ориентиры
 
