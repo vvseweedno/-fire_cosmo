@@ -412,10 +412,13 @@ def calibrate_bs_landcover_thresholds(
                 "forest": "forest_thresholds",
             }[group_name]
             initial = getattr(current.bs, attr)
+            # Propose thresholds from this land-cover group only. The global
+            # all-pixel competition objective below remains the acceptance gate.
+            group_pixels = group_masks[group_name]
             local = optimize_ordered_thresholds(
-                scores,
-                targets,
-                group_valid,
+                scores[group_pixels],
+                targets[group_pixels],
+                group_valid[group_pixels],
                 initial=initial,
                 max_candidates=max_candidates,
                 passes=2,
