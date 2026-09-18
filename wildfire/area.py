@@ -1,0 +1,59 @@
+"""Geospatial area calculations with explicit CRS safety."""
+
+from __future__ import annotations
+
+import numpy as np
+from affine import Affine
+from rasterio.crs import CRS
+
+
+def projected_pixel_area_m2(
+    transform: Affine,
+    crs: CRS | str,
+) -> float:
+    """Return pixel area in square metres for a metric projected CRS.
+
+    Geographic degree grids are deliberately rejected. They require geodesic
+    area calculation and must never be converted to hectares by treating
+    degrees as metres.
+    """
+
+    resolved = CRS.from_user_input(crs)
+    if resolved.is_geographic:
+        raise ValueError(
+            "geographic CRS requires geodesic area calculation; "
+            "degree-sized pixels cannot be treated as metres"
+        )
+    units = (resolved.linear_units or "").lower()
+    if units not in {"metre", "meter", "metres", "meters", "m"}:
+        raise ValueError(f"unsupported projected CRS linear units: {units!r}")
+
+    # Determinant handles north-up and rotated/sheared affine transforms.
+    area = abs(transform.a * transform.e - transform.b * transform.d)
+    if not np.isfinite(area) or area <= 0:
+        raise ValueError("pixel transform has non-positive/invalid area")
+    return float(area)
+
+
+def burned_area_hectares(
+    burned_mask: np.ndarray,
+    *,
+    transform: Affine,
+    crs: CRS | str,
+    valid_mask: np.ndarray | None = None,
+) -> float:
+    """Calculate burned area only when pixel area is physically grounded."""
+
+    burned = np.asarray(burned_mask, dtype=bool)
+    if burned.ndim != 2:
+        raise ValueError("burned_mask must be a 2D raster")
+
+    if valid_mask is not None:
+        valid = np.asarray(valid_mask, dtype=bool)
+        if valid.shape != burned.shape:
+            raise ValueError("valid_mask shape differs from burned_mask")
+        burned = burned & valid
+
+    pixel_area = projected_pixel_area_m2(transform, crs)
+    burned_pixels = int(np.count_nonzero(burned))
+    return burned_pixels * pixel_area / 10_000.0
