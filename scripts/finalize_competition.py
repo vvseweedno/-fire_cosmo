@@ -42,6 +42,13 @@ from wildfire.af_ensemble_validation import crossfit_af_candidate_ensemble
 from wildfire.bs_ensemble_validation import crossfit_bs_candidate_ensemble
 from wildfire.crossfit import crossfit_calibrate_and_evaluate
 from wildfire.dataset_evidence import dataset_fingerprint
+from wildfire.experiment_registry import (
+    ExperimentRecord,
+    peak_ram_mb,
+    resolve_git_commit_sha,
+    utc_timestamp,
+    write_experiment_record,
+)
 from wildfire.leakage import audit_leakage
 from wildfire.metadata import read_meta_csv
 from wildfire.model_config import load_model_config, save_model_config
@@ -440,6 +447,8 @@ def run(
     test_root = Path(test_dir)
     root = Path(work_dir)
     root.mkdir(parents=True, exist_ok=True)
+    pipeline_started = time.perf_counter()
+    source_commit_sha = resolve_git_commit_sha()
 
     train_preflight = preflight(train_root, mode="train", deep=True)
     test_preflight = preflight(test_root, mode="test", deep=True)
@@ -557,6 +566,73 @@ def run(
     final_submission = root / "submission.csv"
     shutil.copyfile(Path(str(inference_runs[0]["path"])), final_submission)
 
+    combined_fingerprint = hashlib.sha256(
+        (
+            str(data_audit["train"]["manifest_sha256"])
+            + ":"
+            + str(data_audit["test"]["manifest_sha256"])
+        ).encode("utf-8")
+    ).hexdigest()
+    event_ids = sorted({str(item.split_group) for item in meta.values()})
+    experiment = ExperimentRecord(
+        experiment_id=f"final-{source_commit_sha[:12]}-seed{seed}",
+        timestamp=utc_timestamp(),
+        git_commit_sha=source_commit_sha,
+        dataset_fingerprint=combined_fingerprint,
+        task="COMBINED",
+        candidate_name="FINAL_COMPOSITE",
+        candidate_version="competition-max-accuracy-v2",
+        configuration={
+            "folds": folds,
+            "seed": seed,
+            "score_epsilon": score_epsilon,
+            "bootstrap_replicates": bootstrap_replicates,
+            "af_alpha_steps": af_alpha_steps,
+            "bs_max_candidates": bs_max_candidates,
+            "bs_passes": bs_passes,
+            "bs_landcover_passes": bs_landcover_passes,
+            "alpha_steps": alpha_steps,
+            "ensemble_threshold_candidates": ensemble_threshold_candidates,
+            "ensemble_threshold_passes": ensemble_threshold_passes,
+            "promotions": first["promotions"],
+            "score_contract_status": "configured_competition_objective",
+            "crossfit_event_policy": "rotating holdout; see fold manifest",
+        },
+        seed=seed,
+        fold_manifest_sha256=_sha256(fold_manifest),
+        train_events=event_ids,
+        holdout_events=[],
+        per_fold_metrics={
+            "baseline": first["baseline_crossfit"],
+            "af_candidate": first["af_candidate_crossfit"],
+            "bs_candidate": first["bs_candidate_crossfit"],
+        },
+        aggregate_metrics={
+            key: float(first["metrics"][key]) for key in METRIC_KEYS
+        },
+        official_score=float(first["metrics"]["score"]),
+        reference_score=float(first["baseline_metrics"]["score"]),
+        delta_score=float(first["delta_score"]),
+        runtime_seconds=time.perf_counter() - pipeline_started,
+        peak_ram_mb=peak_ram_mb(),
+        gpu_info={
+            "status": "NOT_PROBED",
+            "note": "No GPU dependency is required by the current finalizer.",
+        },
+        bootstrap_result=bootstrap,
+        state="CANDIDATE",
+        promoted=bool(any(first["promotions"].values())),
+        promotion_reason=(
+            "Cross-fit score gain, paired event bootstrap, reproducibility and "
+            "submission gates passed; exact-source CI is still pending."
+        ),
+        rejected_reason=None,
+    )
+    experiment_path = write_experiment_record(
+        root / "artifacts" / "experiments",
+        experiment,
+    )
+
     freeze = {
         "status": "frozen_candidate",
         "proof_status": "PENDING_CI",
@@ -590,6 +666,7 @@ def run(
             "fold_manifest": str(fold_manifest),
             "fold_manifest_sha256": _sha256(fold_manifest),
             "leakage_audit": str(root / "artifacts" / "leakage_audit.json"),
+            "experiment_record": str(experiment_path),
         },
         "inference_runs": inference_runs,
     }
@@ -598,8 +675,14 @@ def run(
 
     evidence = {
         "ci": {
-            "green": False,
-            "note": "Set from the actual GitHub Actions result before PROVEN verification.",
+            "source_commit_sha": source_commit_sha,
+            "workflow_run_id": None,
+            "workflow_sha": None,
+            "workflow_conclusion": None,
+            "note": (
+                "Attach the actual GitHub Actions run id/SHA/conclusion with "
+                "verify_proven_release.py before PROVEN verification."
+            ),
         },
         "preflight": {
             "train": train_preflight,
@@ -626,6 +709,7 @@ def run(
             "run_1": inference_runs[0],
             "run_2": inference_runs[1],
         },
+        "experiment_record": str(experiment_path),
     }
     evidence_path = root / "artifacts" / "release_evidence.json"
     _write_json(evidence_path, evidence)
@@ -642,6 +726,8 @@ def run(
         "final_model_config": str(final_config),
         "freeze_manifest": str(freeze_path),
         "release_evidence": str(evidence_path),
+        "experiment_record": str(experiment_path),
+        "source_commit_sha": source_commit_sha,
         "reproducibility": freeze["reproducibility"],
         "leakage_audit": freeze["leakage_audit"],
         "dataset_fingerprint": freeze["dataset_fingerprint"],
