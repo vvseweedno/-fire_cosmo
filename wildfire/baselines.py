@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from wildfire.af_candidates import active_fire_score_candidates, fuse_af_candidate_scores
 from wildfire.bs_candidates import burn_score_candidates, fuse_candidate_scores
 from wildfire.constants import (
     LC_CROP,
@@ -14,51 +15,17 @@ from wildfire.constants import (
     LC_TREE,
     LC_WETLAND,
 )
-from wildfire.features import local_mean_3x3, robust_z
 from wildfire.model_config import ModelConfig
-
-
-def _valid_mask(channels: dict[str, np.ndarray], shape: tuple[int, int]) -> np.ndarray:
-    valid = np.ones(shape, dtype=bool)
-    if "VALID_MASK" in channels:
-        valid &= np.asarray(channels["VALID_MASK"]) > 0
-    return valid
 
 
 def active_fire_score(
     channels: dict[str, np.ndarray],
     config: ModelConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    cfg = (config or ModelConfig()).af
-    i4 = np.asarray(channels["I4"], dtype=np.float32)
-    i5 = np.asarray(channels["I5"], dtype=np.float32)
-    if i4.shape != i5.shape:
-        raise ValueError("I4 and I5 shapes differ")
-
-    valid = _valid_mask(channels, i4.shape)
-    z4 = robust_z(i4, valid)
-    z5 = robust_z(i5, valid)
-    local_anomaly = z4 - local_mean_3x3(z4)
-
-    score = (
-        cfg.z4_weight * z4
-        + cfg.z5_weight * z5
-        + cfg.local_anomaly_weight * local_anomaly
-    )
-    if "I3" in channels:
-        score -= cfg.i3_sunglint_penalty * np.maximum(
-            robust_z(channels["I3"], valid),
-            0.0,
-        )
-
-    if "LANDCOVER" in channels:
-        lc = np.asarray(channels["LANDCOVER"])
-        score = score.copy()
-        score[np.isin(lc, [80, 70])] -= cfg.water_snow_penalty
-        score[lc == 50] -= cfg.built_penalty
-        score[lc == 60] -= cfg.bare_penalty
-
-    score = np.where(np.isfinite(score), score, -np.inf).astype(np.float32, copy=False)
+    """Continuous AF score from the frozen metric-gated candidate ensemble."""
+    resolved = config or ModelConfig()
+    candidates, valid = active_fire_score_candidates(channels, resolved)
+    score = fuse_af_candidate_scores(candidates, resolved.af.score_weights, valid)
     return score, valid
 
 
