@@ -5,6 +5,7 @@ on:
     branches:
       - ready-prototype
       - ready-prototype-final-v2
+      - competition-final-proven
   pull_request:
 
 jobs:
