@@ -1,0 +1,11 @@
+.git
+.github
+__pycache__
+.pytest_cache
+.ruff_cache
+.venv
+venv
+data/train
+data/test
+data/private
+outputs
