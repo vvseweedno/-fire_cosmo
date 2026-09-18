@@ -1,6 +1,6 @@
 """Machine-readable experiment records for reproducible model selection."""
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import json
 import os
