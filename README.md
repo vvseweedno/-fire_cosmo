@@ -109,9 +109,29 @@ python scripts/evaluate_crossfit_oof.py \
   --deployment-config artifacts/crossfit_deployment_config.json \
   --bs-max-candidates 128 --bs-passes 4
 
+# Дополнительный BS search: BASE остаётся legal fallback.
+python scripts/generate_bs_candidate_oof.py \
+  --data-dir /path/to/train \
+  --fold-manifest splits/folds_seed42.json \
+  --model-config artifacts/crossfit_deployment_config.json \
+  --output-root outputs/oof_bs_candidates
+
+python scripts/evaluate_crossfit_bs_candidates.py \
+  --candidate-root outputs/oof_bs_candidates \
+  --fold-manifest splits/folds_seed42.json \
+  --base-config artifacts/crossfit_deployment_config.json \
+  --output outputs/crossfit_bs_candidate_ensemble.json
+
+# Выполнять promotion только если promotion_allowed=true.
+python scripts/optimize_bs_candidate_ensemble.py \
+  --candidate-root outputs/oof_bs_candidates \
+  --base-config artifacts/crossfit_deployment_config.json \
+  --output-config artifacts/final_metric_config.json \
+  --output-report outputs/bs_ensemble_report.json
+
 python inference.py \
   --data-dir /path/to/test \
-  --model-config artifacts/crossfit_deployment_config.json \
+  --model-config artifacts/final_metric_config.json \
   --output submission.csv
 
 python scripts/validate_submission.py \

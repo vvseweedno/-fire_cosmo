@@ -287,12 +287,12 @@ def calibrate_bs_cloud_sar_fallback(
 def _bs_score(
     prediction: np.ndarray,
     target: np.ndarray,
-    valid: np.ndarray,
 ) -> tuple[float, float, float]:
+    """Official BS subscore: predictions may be masked, targets are not excluded."""
     burn = BinaryAccumulator()
     severity = SeverityAccumulator()
-    burn.update(prediction > 0, target > 0, valid)
-    severity.update(prediction, target, valid)
+    burn.update(prediction > 0, target > 0)
+    severity.update(prediction, target)
     return burn.iou, severity.miou, 0.35 * burn.iou + 0.30 * severity.miou
 
 
@@ -387,7 +387,6 @@ def calibrate_bs_landcover_thresholds(
     current_iou, current_miou, current_score = _bs_score(
         current_prediction,
         targets,
-        valid,
     )
     trace: list[dict[str, object]] = [
         {
@@ -413,10 +412,13 @@ def calibrate_bs_landcover_thresholds(
                 "forest": "forest_thresholds",
             }[group_name]
             initial = getattr(current.bs, attr)
+            # Propose thresholds from this land-cover group only. The global
+            # all-pixel competition objective below remains the acceptance gate.
+            group_pixels = group_masks[group_name]
             local = optimize_ordered_thresholds(
-                scores,
-                targets,
-                group_valid,
+                scores[group_pixels],
+                targets[group_pixels],
+                group_valid[group_pixels],
                 initial=initial,
                 max_candidates=max_candidates,
                 passes=2,
@@ -433,7 +435,6 @@ def calibrate_bs_landcover_thresholds(
             iou_burn, miou_severity, candidate_score = _bs_score(
                 prediction,
                 targets,
-                valid,
             )
             accepted = candidate_score >= current_score - 1e-12
             trace.append(
@@ -464,7 +465,6 @@ def calibrate_bs_landcover_thresholds(
     final_iou, final_miou, final_score = _bs_score(
         final_prediction,
         targets,
-        valid,
     )
 
     metadata = dict(current.training)

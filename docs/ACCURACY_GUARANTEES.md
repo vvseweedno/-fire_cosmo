@@ -40,6 +40,24 @@ Ablation uncertainty is resampled by fire_event_id groups, not individual
 pixels. This better respects within-fire correlation than a naive pixel
 bootstrap.
 
+
+### BASE-anchored burn-index candidate ensemble
+
+The deployable BS candidate search always contains `BASE`, which is exactly the
+current cloud/SAR-aware dNBR score. Candidate weights are convex and the pooled
+optimizer starts from the best legal single candidate, so adding the candidate
+search cannot make the selected pooled OOF objective worse than the best
+candidate available in that search.
+
+More importantly, promotion is measured separately by
+`scripts/evaluate_crossfit_bs_candidates.py`: for fold k, candidate weights,
+global severity thresholds and land-cover thresholds are fitted only on the
+other folds. The report exposes `promotion_allowed` only when the aggregate
+cross-fitted BS contribution improves over the BASE-only path.
+
+Because AF is unchanged in this comparison, the reported BS subscore delta is
+also the delta in the full competition Score on the same cross-fitted records.
+
 ## Strong evidence, but not a guarantee on this dataset
 
 The following are research-backed candidates:

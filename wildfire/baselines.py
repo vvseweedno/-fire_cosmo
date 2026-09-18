@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from wildfire.bs_candidates import burn_score_candidates, fuse_candidate_scores
 from wildfire.constants import (
     LC_CROP,
     LC_GRASS,
@@ -14,7 +15,6 @@ from wildfire.constants import (
     LC_WETLAND,
 )
 from wildfire.features import local_mean_3x3, robust_z
-from wildfire.fusion import burn_fusion_components, fuse_burn_score
 from wildfire.model_config import ModelConfig
 
 
@@ -78,15 +78,11 @@ def burn_severity_score(
     channels: dict[str, np.ndarray],
     config: ModelConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Continuous BS score with OOF-calibrated cloud/SAR fallback."""
+    """Continuous BS score from the frozen metric-gated candidate ensemble."""
     resolved = config or ModelConfig()
-    components = burn_fusion_components(channels)
-    return fuse_burn_score(
-        components,
-        clear_sar_weight=resolved.bs.sar_weight,
-        cloud_sar_weight=resolved.bs.cloud_sar_weight,
-        sar_clip=resolved.bs.sar_clip,
-    )
+    candidates, valid = burn_score_candidates(channels, resolved)
+    score = fuse_candidate_scores(candidates, resolved.bs.score_weights, valid)
+    return score, valid
 
 
 def _threshold_arrays(

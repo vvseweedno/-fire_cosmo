@@ -29,11 +29,12 @@ class BSConfig:
     sar_weight: float = 0.025
     cloud_sar_weight: float = 0.0
     sar_clip: float = 3.0
+    score_weights: dict[str, float] = field(default_factory=lambda: {"BASE": 1.0})
 
 
 @dataclass(frozen=True)
 class ModelConfig:
-    version: int = 2
+    version: int = 3
     af: AFConfig = field(default_factory=AFConfig)
     bs: BSConfig = field(default_factory=BSConfig)
     training: dict[str, Any] = field(default_factory=dict)
@@ -46,6 +47,27 @@ def _triple(value: object, name: str) -> tuple[float, float, float]:
     if not result[0] < result[1] < result[2]:
         raise ValueError(f"{name} thresholds must be strictly increasing")
     return result  # type: ignore[return-value]
+
+
+def _score_weights(value: object) -> dict[str, float]:
+    if value is None:
+        return {"BASE": 1.0}
+    if not isinstance(value, dict):
+        raise ValueError("score_weights must be an object mapping candidate names to weights")
+    result: dict[str, float] = {}
+    for raw_name, raw_weight in value.items():
+        name = str(raw_name).strip().upper()
+        if not name:
+            raise ValueError("score_weights contains an empty candidate name")
+        weight = float(raw_weight)
+        if weight < 0:
+            raise ValueError("score_weights must be non-negative")
+        if weight > 0:
+            result[name] = weight
+    if not result or sum(result.values()) <= 0:
+        raise ValueError("score_weights must contain at least one positive weight")
+    total = float(sum(result.values()))
+    return {name: weight / total for name, weight in result.items()}
 
 
 def model_config_from_dict(payload: dict[str, Any]) -> ModelConfig:
@@ -82,6 +104,7 @@ def model_config_from_dict(payload: dict[str, Any]) -> ModelConfig:
         sar_weight=float(bs_payload.get("sar_weight", 0.025)),
         cloud_sar_weight=float(bs_payload.get("cloud_sar_weight", 0.0)),
         sar_clip=float(bs_payload.get("sar_clip", 3.0)),
+        score_weights=_score_weights(bs_payload.get("score_weights")),
     )
     return ModelConfig(
         version=int(payload.get("version", 1)),

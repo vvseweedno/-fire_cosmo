@@ -35,7 +35,10 @@ def _validate_score_maps(
         array = np.asarray(score, dtype=np.float32)
         if array.shape != truth.shape:
             raise ValueError(f"{name}: score shape differs from target")
-        result[name] = array
+        if np.any(mask & ~np.isfinite(array)):
+            raise ValueError(f"{name}: non-finite score inside valid pixels")
+        # Convex blending must not evaluate 0 * +/-inf outside the metric mask.
+        result[name] = np.where(mask, array, 0.0).astype(np.float32, copy=False)
     return result
 
 
