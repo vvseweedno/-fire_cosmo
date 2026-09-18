@@ -85,7 +85,7 @@ def _spectral_consensus(
     bands simply reduce the number of voters.
     """
     features = burn_physics_features(channels)
-    evidence_names = ("RBR", "RDNBR", "DNDVI", "DNDMI", "DMIRBI", "DBAIS2")
+    evidence_names = ("DNDVI", "DNDMI", "DMIRBI", "DBAIS2")
     evidence: list[np.ndarray] = []
     for name in evidence_names:
         value = features.get(name)
