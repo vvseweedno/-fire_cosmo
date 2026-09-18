@@ -82,12 +82,18 @@ def run(
         else:
             score, valid = burn_severity_score(channels, config)
 
+        landcover = (
+            np.asarray(channels["LANDCOVER"])
+            if task == "BS" and "LANDCOVER" in channels
+            else None
+        )
         record = OOFRecord(
             chip_id=chip_id,
             task=task,
             score=np.asarray(score, dtype=np.float32),
             target=target,
             valid=np.asarray(valid, dtype=bool),
+            landcover=landcover,
         )
         save_oof_record(record, output / f"{chip_id}.npz")
         by_task[task] += 1
