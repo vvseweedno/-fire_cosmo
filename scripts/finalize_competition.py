@@ -41,6 +41,7 @@ from scripts.preflight_dataset import run as preflight
 from wildfire.af_ensemble_validation import crossfit_af_candidate_ensemble
 from wildfire.bs_ensemble_validation import crossfit_bs_candidate_ensemble
 from wildfire.crossfit import crossfit_calibrate_and_evaluate
+from wildfire.dataset_evidence import dataset_fingerprint
 from wildfire.metadata import read_meta_csv
 from wildfire.model_config import load_model_config, save_model_config
 from wildfire.oof import load_oof_directory
@@ -446,6 +447,12 @@ def run(
     if not train_preflight["ok"] or not test_preflight["ok"]:
         raise RuntimeError("dataset preflight failed")
 
+    data_audit = {
+        "train": dataset_fingerprint(train_root),
+        "test": dataset_fingerprint(test_root),
+    }
+    _write_json(root / "artifacts" / "data_audit.json", data_audit)
+
     meta = read_meta_csv(train_root / "meta.csv")
     fold_manifest = root / f"folds_seed{seed}.json"
     manifest = build_group_folds(
@@ -563,6 +570,10 @@ def run(
             ),
         },
         "leakage_audit": manifest.get("leakage_audit"),
+        "dataset_fingerprint": {
+            "train": data_audit["train"]["manifest_sha256"],
+            "test": data_audit["test"]["manifest_sha256"],
+        },
         "artifacts": {
             "model_config": str(final_config),
             "model_config_sha256": _sha256(final_config),
@@ -586,6 +597,10 @@ def run(
             "test": test_preflight,
         },
         "leakage_audit": manifest.get("leakage_audit"),
+        "dataset_fingerprint": {
+            "train": data_audit["train"]["manifest_sha256"],
+            "test": data_audit["test"]["manifest_sha256"],
+        },
         "crossfit": {
             "baseline": first["baseline_metrics"],
             "final": first["metrics"],
@@ -620,6 +635,8 @@ def run(
         "release_evidence": str(evidence_path),
         "reproducibility": freeze["reproducibility"],
         "leakage_audit": freeze["leakage_audit"],
+        "dataset_fingerprint": freeze["dataset_fingerprint"],
+        "data_audit": str(root / "artifacts" / "data_audit.json"),
         "inference_runs": inference_runs,
     }
 
