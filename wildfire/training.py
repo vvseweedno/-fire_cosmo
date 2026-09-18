@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import collections.abc
 from dataclasses import replace
 
 import numpy as np
@@ -27,8 +27,8 @@ def threshold_grid(minimum: float, maximum: float, step: float) -> list[float]:
 
 
 def calibrate_af_threshold(
-    samples: Iterable[AFTrainingSample],
-    thresholds: Iterable[float],
+    samples: collections.abc.Iterable[AFTrainingSample],
+    thresholds: collections.abc.Iterable[float],
     base_config: ModelConfig,
 ) -> tuple[ModelConfig, list[dict[str, float | int]]]:
     """Maximise micro-F1 on the supplied training partition.
