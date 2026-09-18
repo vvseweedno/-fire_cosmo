@@ -45,10 +45,7 @@ from wildfire.oof import load_oof_directory
 from wildfire.release_gate import official_score
 from wildfire.split import build_group_folds, write_split_manifest
 from wildfire.statistics import GroupedPrediction, paired_group_bootstrap
-from wildfire.submission import (
-    read_submission_template,
-    validate_submission_against_template,
-)
+from wildfire.submission import read_submission_template, validate_submission_against_template
 
 
 METRIC_KEYS = ("f1_af", "iou_burn", "miou_severity", "score")
