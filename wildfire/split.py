@@ -24,16 +24,40 @@ def _grouped(meta: Mapping[str, ChipMeta]) -> dict[str, list[ChipMeta]]:
     return groups
 
 
+def _leakage_audit(meta: Mapping[str, ChipMeta]) -> dict[str, object]:
+    grouped = sum(item.fire_event_id is not None for item in meta.values())
+    fallback = len(meta) - grouped
+    return {
+        "event_grouped_chips": grouped,
+        "chip_fallbacks": fallback,
+        "event_group_coverage": grouped / len(meta) if meta else 0.0,
+        "strict_event_grouping": fallback == 0,
+    }
+
+
+def _require_grouping(meta: Mapping[str, ChipMeta]) -> None:
+    missing = sorted(item.chip_id for item in meta.values() if not item.fire_event_id)
+    if missing:
+        raise ValueError(
+            "strict leakage-safe split requested, but organiser metadata has no "
+            f"event/group id for {len(missing)} chips; examples={missing[:10]}. "
+            "Do not silently call chip-level fallback leakage-safe."
+        )
+
+
 def build_group_split(
     meta: Mapping[str, ChipMeta],
     *,
     validation_fraction: float = 0.2,
     seed: int = 42,
+    require_event_groups: bool = False,
 ) -> dict[str, object]:
     if not 0.0 < validation_fraction < 1.0:
         raise ValueError("validation_fraction must be between 0 and 1")
     if not meta:
         raise ValueError("meta is empty")
+    if require_event_groups:
+        _require_grouping(meta)
 
     groups = _grouped(meta)
     group_partition: dict[str, str] = {}
@@ -66,10 +90,11 @@ def build_group_split(
         return {key: counts.get(key, 0) for key in ("af", "bs")}
 
     return {
-        "version": 1,
+        "version": 2,
         "seed": seed,
         "validation_fraction_requested": validation_fraction,
-        "group_key": "fire_event_id (fallback: chip_id when missing)",
+        "group_key": "organiser event/group id; chip_id fallback when missing",
+        "leakage_audit": _leakage_audit(meta),
         "train": train,
         "validation": validation,
         "summary": {
@@ -88,11 +113,14 @@ def build_group_folds(
     *,
     n_splits: int = 5,
     seed: int = 42,
+    require_event_groups: bool = False,
 ) -> dict[str, object]:
     if n_splits < 2:
         raise ValueError("n_splits must be at least 2")
     if not meta:
         raise ValueError("meta is empty")
+    if require_event_groups:
+        _require_grouping(meta)
 
     groups = _grouped(meta)
     if len(groups) < n_splits:
@@ -165,10 +193,11 @@ def build_group_folds(
         )
 
     return {
-        "version": 1,
+        "version": 2,
         "seed": seed,
         "n_splits": n_splits,
-        "group_key": "fire_event_id (fallback: chip_id when missing)",
+        "group_key": "organiser event/group id; chip_id fallback when missing",
+        "leakage_audit": _leakage_audit(meta),
         "folds": folds,
     }
 
