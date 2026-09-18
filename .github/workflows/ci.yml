@@ -23,7 +23,7 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Compile
-        run: python -m compileall -q wildfire app scripts inference.py tests
+        run: python -m compileall -q wildfire app scripts inference.py train.py tests
       - name: Tests
         run: pytest
       - name: API smoke
