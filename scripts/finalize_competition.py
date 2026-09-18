@@ -27,6 +27,8 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+import numpy as np
+
 from inference import run as run_inference
 from scripts.generate_af_candidate_oof import run as generate_af_candidate_oof
 from scripts.generate_baseline_oof import run as generate_baseline_oof
@@ -46,6 +48,7 @@ from wildfire.model_config import load_model_config, save_model_config
 from wildfire.oof import load_oof_directory
 from wildfire.release_gate import official_score
 from wildfire.split import build_group_folds, write_split_manifest
+from wildfire.statistics import GroupedPrediction, paired_group_bootstrap
 from wildfire.submission import (
     read_submission_template,
     validate_submission_against_template,
@@ -91,6 +94,74 @@ def _validate_submission(data_dir: Path, submission: Path) -> dict[str, object]:
         "sha256": _sha256(submission),
         "errors": [],
     }
+
+
+def _load_grouped_predictions(
+    directory: Path,
+    *,
+    task: str,
+    meta: dict[str, object],
+) -> list[GroupedPrediction]:
+    if not directory.exists():
+        raise RuntimeError(f"missing cross-fit prediction directory: {directory}")
+    records: list[GroupedPrediction] = []
+    for path in sorted(directory.glob("*.npz")):
+        chip_id = path.stem
+        chip_meta = meta.get(chip_id)
+        if chip_meta is None:
+            raise RuntimeError(f"{chip_id}: missing from organiser meta.csv")
+        with np.load(path, allow_pickle=False) as payload:
+            prediction = np.asarray(payload["prediction"])
+            target = np.asarray(payload["target"])
+        group_id = str(getattr(chip_meta, "split_group"))
+        records.append(
+            GroupedPrediction(
+                chip_id=chip_id,
+                group_id=group_id,
+                task=task,
+                prediction=prediction,
+                target=target,
+            )
+        )
+    if not records:
+        raise RuntimeError(f"no saved {task} cross-fit predictions in {directory}")
+    return records
+
+
+def _bootstrap_final_vs_baseline(
+    run_dir: Path,
+    meta: dict[str, object],
+    promotions: dict[str, bool],
+    *,
+    n_boot: int,
+    seed: int,
+) -> dict[str, object]:
+    root = run_dir / "crossfit_predictions"
+    final_records: list[GroupedPrediction] = []
+    baseline_records: list[GroupedPrediction] = []
+
+    for task, key in (("AF", "af"), ("BS", "bs")):
+        task_root = root / task
+        baseline = _load_grouped_predictions(
+            task_root / "baseline",
+            task=task,
+            meta=meta,
+        )
+        final_variant = "ensemble" if promotions[key] else "baseline"
+        selected = _load_grouped_predictions(
+            task_root / final_variant,
+            task=task,
+            meta=meta,
+        )
+        baseline_records.extend(baseline)
+        final_records.extend(selected)
+
+    return paired_group_bootstrap(
+        final_records,
+        baseline_records,
+        n_boot=n_boot,
+        seed=seed,
+    )
 
 
 def _selected_metrics(
@@ -192,6 +263,7 @@ def _fit_once(
         manifest,
         alpha_steps=af_alpha_steps,
         epsilon=af_epsilon,
+        prediction_output=run_dir / "crossfit_predictions" / "AF",
     )
     _write_json(run_dir / "af_candidate_crossfit.json", af_candidate_report)
 
@@ -213,6 +285,7 @@ def _fit_once(
         threshold_candidates=ensemble_threshold_candidates,
         threshold_passes=ensemble_threshold_passes,
         landcover_passes=bs_landcover_passes,
+        prediction_output=run_dir / "crossfit_predictions" / "BS",
     )
     _write_json(run_dir / "bs_candidate_crossfit.json", bs_candidate_report)
 
@@ -312,6 +385,8 @@ def run(
     allow_chip_fallback: bool = False,
     tolerance: float = 1e-8,
     score_epsilon: float = 1e-4,
+    bootstrap_replicates: int = 2000,
+    bootstrap_seed: int = 99173,
     af_alpha_steps: int = 20,
     bs_max_candidates: int = 128,
     bs_passes: int = 4,
@@ -379,6 +454,28 @@ def run(
             f"baseline by epsilon={score_epsilon:g}; delta={first['delta_score']}"
         )
 
+    bootstrap = _bootstrap_final_vs_baseline(
+        root / "repro_run_1",
+        meta,
+        first["promotions"],
+        n_boot=bootstrap_replicates,
+        seed=bootstrap_seed,
+    )
+    _write_json(root / "bootstrap_final_vs_baseline.json", bootstrap)
+    ci95 = bootstrap.get("bootstrap_95_ci")
+    if not isinstance(ci95, list) or len(ci95) != 2:
+        raise RuntimeError("bootstrap report is missing a valid 95% confidence interval")
+    bootstrap_ok = (
+        int(bootstrap.get("n_boot_used", 0)) >= 1000
+        and float(ci95[0]) > 0.0
+        and float(bootstrap.get("probability_delta_positive", 0.0)) >= 0.95
+    )
+    if not bootstrap_ok:
+        raise RuntimeError(
+            "technical proof gate failed: event-level bootstrap stability is "
+            f"not acceptable: {bootstrap}"
+        )
+
     final_config = root / "artifacts" / "final_model_config.json"
     final_config.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(Path(str(first["deployment_config"])), final_config)
@@ -408,13 +505,14 @@ def run(
 
     freeze = {
         "status": "frozen_candidate",
-        "proof_status": "PENDING_CI_AND_BOOTSTRAP",
+        "proof_status": "PENDING_CI",
         "validation": "cross_fitted_oof",
         "promotions": first["promotions"],
         "baseline_crossfit_metrics": first["baseline_metrics"],
         "final_crossfit_metrics": first["metrics"],
         "delta_score_vs_baseline": first["delta_score"],
         "score_epsilon": score_epsilon,
+        "bootstrap": bootstrap,
         "reproducibility": {
             "tolerance": tolerance,
             "metric_deltas": metric_deltas,
@@ -452,7 +550,7 @@ def run(
             "baseline": first["baseline_metrics"],
             "final": first["metrics"],
         },
-        "bootstrap": None,
+        "bootstrap": bootstrap,
         "reproducibility": {
             "run_1": first["metrics"],
             "run_2": second["metrics"],
@@ -471,7 +569,7 @@ def run(
     return {
         "pipeline_ok": True,
         "proven": False,
-        "proof_status": "PENDING_CI_AND_BOOTSTRAP",
+        "proof_status": "PENDING_CI",
         "promotions": first["promotions"],
         "baseline_metrics": first["baseline_metrics"],
         "metrics": first["metrics"],
@@ -503,6 +601,8 @@ def main() -> None:
     )
     parser.add_argument("--tolerance", type=float, default=1e-8)
     parser.add_argument("--score-epsilon", type=float, default=1e-4)
+    parser.add_argument("--bootstrap-replicates", type=int, default=2000)
+    parser.add_argument("--bootstrap-seed", type=int, default=99173)
     parser.add_argument("--af-alpha-steps", type=int, default=20)
     parser.add_argument("--bs-max-candidates", type=int, default=128)
     parser.add_argument("--bs-passes", type=int, default=4)
@@ -521,6 +621,8 @@ def main() -> None:
         allow_chip_fallback=args.allow_chip_fallback,
         tolerance=args.tolerance,
         score_epsilon=args.score_epsilon,
+        bootstrap_replicates=args.bootstrap_replicates,
+        bootstrap_seed=args.bootstrap_seed,
         af_alpha_steps=args.af_alpha_steps,
         bs_max_candidates=args.bs_max_candidates,
         bs_passes=args.bs_passes,
