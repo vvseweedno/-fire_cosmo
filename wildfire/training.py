@@ -2,8 +2,8 @@
 
 import numpy as np
 
-from wildfire.evaluation import BinaryAccumulator
-from wildfire.model_config import ModelConfig
+from .evaluation import BinaryAccumulator
+from .model_config import ModelConfig
 
 
 AFTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
