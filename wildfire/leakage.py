@@ -149,9 +149,14 @@ def audit_leakage(
     blocked = [key for key, value in checks.items() if value is None]
     status = "FAIL" if definite_failures else ("BLOCKED" if blocked else "PASS")
 
+    grouped = len(meta) - len(missing_groups)
     return {
         "status": status,
         "pass": status == "PASS",
+        "event_grouped_chips": grouped,
+        "chip_fallbacks": len(missing_groups),
+        "event_group_coverage": grouped / len(meta) if meta else 0.0,
+        "strict_event_grouping": not missing_groups,
         "checks": checks,
         "failures": definite_failures,
         "blocked_checks": blocked,
