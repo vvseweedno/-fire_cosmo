@@ -42,6 +42,7 @@ from wildfire.af_ensemble_validation import crossfit_af_candidate_ensemble
 from wildfire.bs_ensemble_validation import crossfit_bs_candidate_ensemble
 from wildfire.crossfit import crossfit_calibrate_and_evaluate
 from wildfire.dataset_evidence import dataset_fingerprint
+from wildfire.leakage import audit_leakage
 from wildfire.metadata import read_meta_csv
 from wildfire.model_config import load_model_config, save_model_config
 from wildfire.oof import load_oof_directory
@@ -463,6 +464,13 @@ def run(
     )
     write_split_manifest(manifest, fold_manifest)
 
+    leakage_report = audit_leakage(train_root, manifest)
+    _write_json(root / "artifacts" / "leakage_audit.json", leakage_report)
+    if not allow_chip_fallback and not leakage_report["pass"]:
+        raise RuntimeError(
+            "strict leakage audit failed; inspect artifacts/leakage_audit.json"
+        )
+
     base_config_path = Path("configs/baseline.json")
     first = _fit_once(
         train_root,
@@ -569,7 +577,7 @@ def run(
                 inference_runs[0]["sha256"] == inference_runs[1]["sha256"]
             ),
         },
-        "leakage_audit": manifest.get("leakage_audit"),
+        "leakage_audit": leakage_report,
         "dataset_fingerprint": {
             "train": data_audit["train"]["manifest_sha256"],
             "test": data_audit["test"]["manifest_sha256"],
@@ -581,6 +589,7 @@ def run(
             "submission_sha256": _sha256(final_submission),
             "fold_manifest": str(fold_manifest),
             "fold_manifest_sha256": _sha256(fold_manifest),
+            "leakage_audit": str(root / "artifacts" / "leakage_audit.json"),
         },
         "inference_runs": inference_runs,
     }
@@ -596,7 +605,7 @@ def run(
             "train": train_preflight,
             "test": test_preflight,
         },
-        "leakage_audit": manifest.get("leakage_audit"),
+        "leakage_audit": leakage_report,
         "dataset_fingerprint": {
             "train": data_audit["train"]["manifest_sha256"],
             "test": data_audit["test"]["manifest_sha256"],
