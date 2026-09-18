@@ -1,4 +1,4 @@
-"""Validate organiser-provided dataset structure before inference."""
+"""Validate organiser-provided dataset structure before train/inference."""
 
 from __future__ import annotations
 
@@ -17,25 +17,38 @@ REQUIRED_CHANNELS = {
 }
 
 
-def run(data_dir: str | Path, *, deep: bool = False) -> dict[str, object]:
+def run(
+    data_dir: str | Path,
+    *,
+    mode: str = "test",
+    deep: bool = False,
+) -> dict[str, object]:
     root = Path(data_dir)
+    resolved_mode = mode.lower()
+    if resolved_mode not in {"train", "test"}:
+        raise ValueError("mode must be 'train' or 'test'")
+
     meta = read_meta_csv(root / "meta.csv")
-    template = read_submission_template(root / "sample_submission.csv")
     chips = {chip.chip_id: chip for chip in discover_chips(root)}
-    template_ids = list(dict.fromkeys(row.chip_id for row in template))
+
+    template_rows = 0
+    if resolved_mode == "test":
+        template = read_submission_template(root / "sample_submission.csv")
+        required_ids = list(dict.fromkeys(row.chip_id for row in template))
+        template_rows = len(template)
+    else:
+        required_ids = sorted(meta)
 
     errors: list[str] = []
     warnings: list[str] = []
     task_counts: Counter[str] = Counter()
     optional_presence: Counter[str] = Counter()
 
-    extra = sorted(set(chips) - set(template_ids))
+    extra = sorted(set(chips) - set(required_ids))
     if extra:
-        warnings.append(
-            f"{len(extra)} discovered chips are not referenced by sample_submission.csv"
-        )
+        warnings.append(f"{len(extra)} discovered chips are not required by {resolved_mode} metadata")
 
-    for chip_id in template_ids:
+    for chip_id in required_ids:
         item = meta.get(chip_id)
         chip = chips.get(chip_id)
         if item is None:
@@ -54,14 +67,15 @@ def run(data_dir: str | Path, *, deep: bool = False) -> dict[str, object]:
 
         expected = item.kind.upper()
         if inferred != expected:
-            errors.append(
-                f"{chip_id}: meta kind={expected} but channels infer task={inferred}"
-            )
+            errors.append(f"{chip_id}: meta kind={expected} but channels infer task={inferred}")
             continue
 
         missing = sorted(REQUIRED_CHANNELS[expected] - available)
         if missing:
             errors.append(f"{chip_id}: missing required channels {missing}")
+            continue
+        if resolved_mode == "train" and "TARGET" not in available:
+            errors.append(f"{chip_id}: training chip is missing TARGET")
             continue
 
         task_counts[expected] += 1
@@ -86,16 +100,15 @@ def run(data_dir: str | Path, *, deep: bool = False) -> dict[str, object]:
                 continue
             shape = next(iter(unique_shapes))
             if shape != item.shape:
-                errors.append(
-                    f"{chip_id}: raster shape={shape} but meta.csv shape={item.shape}"
-                )
+                errors.append(f"{chip_id}: raster shape={shape} but meta.csv shape={item.shape}")
 
     return {
         "ok": not errors,
+        "mode": resolved_mode,
         "data_dir": str(root),
         "deep": deep,
-        "template_rows": len(template),
-        "template_chips": len(template_ids),
+        "template_rows": template_rows,
+        "required_chips": len(required_ids),
         "discovered_chips": len(chips),
         "task_counts": dict(task_counts),
         "optional_channel_presence": dict(sorted(optional_presence.items())),
@@ -107,11 +120,12 @@ def run(data_dir: str | Path, *, deep: bool = False) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
+    parser.add_argument("--mode", choices=("train", "test"), default="test")
     parser.add_argument("--deep", action="store_true")
     parser.add_argument("--output")
     args = parser.parse_args()
 
-    report = run(args.data_dir, deep=args.deep)
+    report = run(args.data_dir, mode=args.mode, deep=args.deep)
     text = json.dumps(report, indent=2, ensure_ascii=False)
     print(text)
 
