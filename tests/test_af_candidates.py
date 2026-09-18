@@ -85,3 +85,44 @@ def test_model_config_can_deploy_non_baseline_af_weights():
 
     assert np.all(np.isfinite(score[valid]))
     assert not np.allclose(score[valid], baseline[valid])
+
+
+def test_hard_negative_context_rewards_supported_thermal_structure():
+    size = 13
+    base = (
+        300.0
+        + np.arange(size, dtype=np.float32)[:, None] * 0.08
+        + np.arange(size, dtype=np.float32)[None, :] * 0.03
+    )
+    i4 = base.copy()
+
+    # Same peak temperature in two contexts: one isolated pixel and one compact
+    # 3x3 thermal structure. The contextual candidate should prefer the latter.
+    i4[2, 2] = 350.0
+    i4[8:11, 8:11] = 350.0
+
+    channels = {
+        "I3": np.full((size, size), 20.0, dtype=np.float32),
+        "I4": i4,
+        "I5": np.full((size, size), 295.0, dtype=np.float32),
+        "LANDCOVER": np.full((size, size), 10, dtype=np.int16),
+        "VALID_MASK": np.ones((size, size), dtype=np.uint8),
+    }
+
+    candidates, valid = active_fire_score_candidates(channels, ModelConfig())
+    contextual = candidates["HARD_NEG_CONTEXT"]
+
+    assert valid[2, 2]
+    assert valid[9, 9]
+    assert contextual[9, 9] > contextual[2, 2]
+
+
+def test_hard_negative_context_penalizes_known_landcover_false_positive_contexts():
+    channels = _channels()
+    candidates, valid = active_fire_score_candidates(channels, ModelConfig())
+    contextual = candidates["HARD_NEG_CONTEXT"]
+
+    # Water/snow context is explicitly penalized; the candidate remains finite
+    # and legal for cross-fitted selection rather than becoming a hard rule.
+    assert np.isfinite(contextual[valid]).all()
+    assert contextual[0, 0] < candidates["I45_Z"][0, 0]
