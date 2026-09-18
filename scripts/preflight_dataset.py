@@ -11,7 +11,6 @@ from wildfire.io import discover_chips, infer_task, load_channels
 from wildfire.metadata import read_meta_csv
 from wildfire.submission import read_submission_template
 
-
 REQUIRED_CHANNELS = {
     "AF": {"I4", "I5"},
     "BS": {"B8A_PRE", "B12_PRE", "B8A_POST", "B12_POST"},
