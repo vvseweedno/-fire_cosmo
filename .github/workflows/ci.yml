@@ -6,6 +6,7 @@ on:
       - ready-prototype
       - ready-prototype-final-v2
       - competition-final-proven
+      - competition-max-accuracy-v2
   pull_request:
 
 jobs:
