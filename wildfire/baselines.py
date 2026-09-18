@@ -13,7 +13,7 @@ from wildfire.constants import (
     LC_TREE,
     LC_WETLAND,
 )
-from wildfire.features import local_mean_3x3, robust_z
+from wildfire.features import burn_physics_features, local_mean_3x3, robust_z
 from wildfire.fusion import burn_fusion_components, fuse_burn_score
 from wildfire.model_config import ModelConfig
 
@@ -74,19 +74,64 @@ def predict_active_fire(
     return ((score >= decision_threshold) & valid).astype(np.uint8)
 
 
+def _spectral_consensus(
+    channels: dict[str, np.ndarray],
+    optical_valid: np.ndarray,
+) -> np.ndarray | None:
+    """Return robust consensus evidence from independent burn-sensitive indices.
+
+    The baseline dNBR itself is intentionally excluded so this term only changes
+    pixel ranking when independent spectral evidence agrees. Missing optional
+    bands simply reduce the number of voters.
+    """
+    features = burn_physics_features(channels)
+    evidence_names = ("RBR", "RDNBR", "DNDVI", "DNDMI", "DMIRBI", "DBAIS2")
+    evidence: list[np.ndarray] = []
+    for name in evidence_names:
+        value = features.get(name)
+        if value is None:
+            continue
+        evidence.append(robust_z(value, optical_valid))
+    if not evidence:
+        return None
+
+    stack = np.stack(evidence, axis=0)
+    consensus = np.median(stack, axis=0)
+    return np.where(np.isfinite(consensus), consensus, 0.0).astype(np.float32)
+
+
 def burn_severity_score(
     channels: dict[str, np.ndarray],
     config: ModelConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Continuous BS score with OOF-calibrated cloud/SAR fallback."""
+    """Continuous BS score with optional OOF-promoted spectral consensus."""
     resolved = config or ModelConfig()
     components = burn_fusion_components(channels)
-    return fuse_burn_score(
+    score, valid = fuse_burn_score(
         components,
         clear_sar_weight=resolved.bs.sar_weight,
         cloud_sar_weight=resolved.bs.cloud_sar_weight,
         sar_clip=resolved.bs.sar_clip,
     )
+
+    if resolved.bs.score_recipe == "dnbr_sar":
+        return score, valid
+    if resolved.bs.score_recipe != "spectral_consensus":
+        raise ValueError(f"Unsupported BS score recipe: {resolved.bs.score_recipe}")
+
+    weight = float(resolved.bs.index_consensus_weight)
+    if weight <= 0:
+        return score, valid
+
+    consensus = _spectral_consensus(channels, components.optical_valid)
+    if consensus is None:
+        return score, valid
+
+    refined = np.asarray(score, dtype=np.float32).copy()
+    clear = components.optical_valid & np.isfinite(refined)
+    refined[clear] += weight * consensus[clear]
+    refined = np.where(valid & np.isfinite(refined), refined, -np.inf)
+    return refined.astype(np.float32, copy=False), valid
 
 
 def _threshold_arrays(
