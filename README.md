@@ -82,6 +82,29 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 12. scripts/validate_submission.py.
 13. Full-test latency benchmark.
 
+## Финальный one-command gate
+
+После того как organiser train/test лежат локально, весь девятишаговый протокол можно
+прогнать одной командой:
+
+```bash
+python scripts/finalize_competition.py \
+  --train-dir /path/to/train \
+  --test-dir /path/to/test \
+  --work-dir final_run
+```
+
+По умолчанию финальный gate требует organiser-provided event/group id для каждого
+train-чипа. Это сделано намеренно: chip-id fallback нельзя честно называть полностью
+leakage-safe. Если официальный metadata действительно не содержит группировки,
+диагностический прогон возможен с `--allow-chip-fallback`, но freeze manifest явно
+сохранит ослабленную гарантию.
+
+Gate выполняет: train/test preflight, fixed folds, cross-fit метрики, SAR/spectral/
+land-cover candidates, baseline-preserving promotion, два независимых повторных
+cross-fit прогона, два inference прогона, strict submission validation и SHA256
+freeze manifest. Финальный кандидат выбирается только по cross-fitted official Score.
+
 ## Metric-max workflow на official train
 
 Ниже — путь, который должен пройти финальный конфиг. Он не использует
