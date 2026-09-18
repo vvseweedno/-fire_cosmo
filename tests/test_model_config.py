@@ -10,3 +10,4 @@ def test_model_config_roundtrip(tmp_path: Path):
     loaded = load_model_config(path)
     assert loaded == source
     assert loaded.bs.default_thresholds == (0.10, 0.27, 0.44)
+    assert loaded.bs.cloud_sar_weight == 0.0

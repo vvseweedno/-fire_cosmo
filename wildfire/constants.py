@@ -19,6 +19,15 @@ LC_WETLAND = 90
 LC_MANGROVE = 95
 LC_MOSS = 100
 
-# Sentinel-2 L2A Scene Classification Layer values that should not contribute
-# to burn-severity estimation.
-INVALID_SCL = frozenset({0, 1, 2, 3, 6, 8, 9, 10, 11})
+# Sentinel-2 L2A SCL classes. 4/5/7 are the optical classes that reproduce
+# the previous deterministic baseline. Cloud/shadow/snow/no-data pixels can
+# still be handled by an independently observed SAR fallback when OOF
+# calibration proves that useful.
+OPTICAL_BASELINE_SCL = frozenset({4, 5, 7})
+SCL_CAST_SHADOW = 2
+SCL_CLOUD_SHADOW = 3
+SCL_WATER = 6
+SCL_CLOUD_MEDIUM = 8
+SCL_CLOUD_HIGH = 9
+SCL_CIRRUS = 10
+SCL_SNOW_ICE = 11

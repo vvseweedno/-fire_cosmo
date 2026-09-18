@@ -27,12 +27,13 @@ class BSConfig:
     crop_thresholds: tuple[float, float, float] = (0.18, 0.32, 0.48)
     forest_thresholds: tuple[float, float, float] = (0.10, 0.27, 0.44)
     sar_weight: float = 0.025
+    cloud_sar_weight: float = 0.0
     sar_clip: float = 3.0
 
 
 @dataclass(frozen=True)
 class ModelConfig:
-    version: int = 1
+    version: int = 2
     af: AFConfig = field(default_factory=AFConfig)
     bs: BSConfig = field(default_factory=BSConfig)
     training: dict[str, Any] = field(default_factory=dict)
@@ -79,6 +80,7 @@ def model_config_from_dict(payload: dict[str, Any]) -> ModelConfig:
             "forest_thresholds",
         ),
         sar_weight=float(bs_payload.get("sar_weight", 0.025)),
+        cloud_sar_weight=float(bs_payload.get("cloud_sar_weight", 0.0)),
         sar_clip=float(bs_payload.get("sar_clip", 3.0)),
     )
     return ModelConfig(

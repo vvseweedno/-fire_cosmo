@@ -5,20 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 from wildfire.constants import (
-    INVALID_SCL,
-    LC_BARE,
-    LC_BUILT,
     LC_CROP,
     LC_GRASS,
     LC_MANGROVE,
     LC_MOSS,
     LC_SHRUB,
-    LC_SNOW,
     LC_TREE,
-    LC_WATER,
     LC_WETLAND,
 )
-from wildfire.features import dnbr, local_mean_3x3, robust_z
+from wildfire.features import local_mean_3x3, robust_z
+from wildfire.fusion import burn_fusion_components, fuse_burn_score
 from wildfire.model_config import ModelConfig
 
 
@@ -58,9 +54,9 @@ def active_fire_score(
     if "LANDCOVER" in channels:
         lc = np.asarray(channels["LANDCOVER"])
         score = score.copy()
-        score[np.isin(lc, [LC_WATER, LC_SNOW])] -= cfg.water_snow_penalty
-        score[lc == LC_BUILT] -= cfg.built_penalty
-        score[lc == LC_BARE] -= cfg.bare_penalty
+        score[np.isin(lc, [80, 70])] -= cfg.water_snow_penalty
+        score[lc == 50] -= cfg.built_penalty
+        score[lc == 60] -= cfg.bare_penalty
 
     score = np.where(np.isfinite(score), score, -np.inf).astype(np.float32, copy=False)
     return score, valid
@@ -82,38 +78,15 @@ def burn_severity_score(
     channels: dict[str, np.ndarray],
     config: ModelConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Continuous BS score and the pixels where this baseline can predict."""
+    """Continuous BS score with OOF-calibrated cloud/SAR fallback."""
     resolved = config or ModelConfig()
-    score = dnbr(
-        channels["B8A_PRE"],
-        channels["B12_PRE"],
-        channels["B8A_POST"],
-        channels["B12_POST"],
+    components = burn_fusion_components(channels)
+    return fuse_burn_score(
+        components,
+        clear_sar_weight=resolved.bs.sar_weight,
+        cloud_sar_weight=resolved.bs.cloud_sar_weight,
+        sar_clip=resolved.bs.sar_clip,
     )
-    valid = _valid_mask(channels, score.shape)
-    for key in ("SCL_PRE", "SCL_POST"):
-        if key in channels:
-            valid &= ~np.isin(np.asarray(channels[key]), list(INVALID_SCL))
-
-    if "LANDCOVER" in channels:
-        landcover = np.asarray(channels["LANDCOVER"])
-        valid &= ~np.isin(landcover, [LC_WATER, LC_SNOW, LC_BUILT])
-
-    adjusted = score.copy()
-    if "VH_PRE" in channels and "VH_POST" in channels:
-        sar_delta = robust_z(
-            np.asarray(channels["VH_PRE"], dtype=np.float32)
-            - np.asarray(channels["VH_POST"], dtype=np.float32),
-            valid,
-        )
-        adjusted += resolved.bs.sar_weight * np.clip(
-            sar_delta,
-            0.0,
-            resolved.bs.sar_clip,
-        )
-
-    adjusted = np.where(np.isfinite(adjusted), adjusted, -np.inf)
-    return adjusted.astype(np.float32, copy=False), valid
 
 
 def _threshold_arrays(

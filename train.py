@@ -8,15 +8,16 @@ from pathlib import Path
 
 import numpy as np
 
-from wildfire.baselines import active_fire_score, burn_severity_score
+from wildfire.baselines import active_fire_score
+from wildfire.fusion import burn_fusion_components
 from wildfire.io import discover_chips, infer_task, load_channels
 from wildfire.model_config import ModelConfig, load_model_config, save_model_config
 from wildfire.split import read_split_manifest
 from wildfire.training import (
     AFTrainingSample,
-    BSTrainingSample,
+    BSFusionTrainingSample,
     calibrate_af_threshold_exact,
-    calibrate_bs_thresholds,
+    calibrate_bs_cloud_sar_fallback,
 )
 
 
@@ -47,11 +48,10 @@ def _af_samples(
         yield score, np.asarray(channels["TARGET"]), model_valid
 
 
-def _bs_samples(
+def _bs_fusion_samples(
     discovered,
     train_chip_ids: set[str],
-    config: ModelConfig,
-) -> Iterator[BSTrainingSample]:
+) -> Iterator[BSFusionTrainingSample]:
     for chip_id in sorted(train_chip_ids):
         chip = discovered[chip_id]
         channels = load_channels(chip)
@@ -59,8 +59,7 @@ def _bs_samples(
             raise RuntimeError(f"{chip_id}: TARGET is missing")
         if infer_task(channels) != "BS":
             continue
-        score, model_valid = burn_severity_score(channels, config)
-        yield score, np.asarray(channels["TARGET"]), model_valid
+        yield burn_fusion_components(channels), np.asarray(channels["TARGET"])
 
 
 def main() -> None:
@@ -82,8 +81,8 @@ def main() -> None:
         _af_samples(discovered, train_chip_ids, base_config),
         base_config,
     )
-    final_config, bs_result = calibrate_bs_thresholds(
-        _bs_samples(discovered, train_chip_ids, af_config),
+    final_config, bs_result = calibrate_bs_cloud_sar_fallback(
+        _bs_fusion_samples(discovered, train_chip_ids),
         af_config,
         max_candidates=args.bs_max_candidates,
         passes=args.bs_passes,
@@ -95,8 +94,9 @@ def main() -> None:
         f"{af_result['threshold']:.6f}; train micro-F1={af_result['f1']:.6f}"
     )
     print(
-        "BS ordered thresholds: "
-        f"{tuple(round(float(x), 6) for x in bs_result['thresholds'])}; "
+        "BS cloud-aware calibration: "
+        f"cloud_sar_weight={final_config.bs.cloud_sar_weight:.6f}; "
+        f"thresholds={tuple(round(float(x), 6) for x in bs_result['thresholds'])}; "
         f"burn-IoU={bs_result['iou_burn']:.6f}; "
         f"severity-mIoU={bs_result['miou_severity']:.6f}; "
         f"weighted BS subscore={bs_result['bs_subscore']:.6f}"

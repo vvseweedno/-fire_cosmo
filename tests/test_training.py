@@ -1,9 +1,11 @@
 import numpy as np
 
+from wildfire.fusion import BurnFusionComponents
 from wildfire.model_config import ModelConfig
 from wildfire.training import (
     calibrate_af_threshold,
     calibrate_af_threshold_exact,
+    calibrate_bs_cloud_sar_fallback,
     calibrate_bs_thresholds,
     threshold_grid,
 )
@@ -61,3 +63,30 @@ def test_bs_calibration_learns_ordered_thresholds():
     assert calibrated.bs.default_thresholds == calibrated.bs.forest_thresholds
     assert calibrated.bs.default_thresholds[0] < calibrated.bs.default_thresholds[1]
     assert calibrated.bs.default_thresholds[1] < calibrated.bs.default_thresholds[2]
+
+
+def test_cloud_sar_optimizer_can_recover_cloudy_severity_pixels():
+    optical = np.array([[0.0, 0.2, 0.5, 0.8, 0.0, 0.0, 0.0]], dtype=np.float32)
+    sar = np.array([[0.0, 0.0, 0.0, 0.0, 0.2, 0.35, 0.6]], dtype=np.float32)
+    clear = np.array([[1, 1, 1, 1, 0, 0, 0]], dtype=bool)
+    base_valid = np.ones_like(clear)
+    sar_available = np.ones_like(clear)
+    target = np.array([[0, 1, 2, 3, 1, 2, 3]], dtype=np.uint8)
+
+    components = BurnFusionComponents(
+        optical_score=optical,
+        sar_score=sar,
+        optical_valid=clear,
+        base_valid=base_valid,
+        sar_available=sar_available,
+    )
+    calibrated, result = calibrate_bs_cloud_sar_fallback(
+        [(components, target)],
+        ModelConfig(),
+        cloud_weight_candidates=(0.0, 1.0),
+        max_candidates=32,
+        passes=4,
+    )
+
+    assert calibrated.bs.cloud_sar_weight == 1.0
+    assert np.isclose(result["bs_subscore"], 0.65)

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "af": {
     "threshold": 4.0,
     "z4_weight": 1.1,
@@ -16,6 +16,7 @@
     "crop_thresholds": [0.18, 0.32, 0.48],
     "forest_thresholds": [0.1, 0.27, 0.44],
     "sar_weight": 0.025,
+    "cloud_sar_weight": 0.0,
     "sar_clip": 3.0
   },
   "training": {}

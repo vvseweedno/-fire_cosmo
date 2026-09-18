@@ -8,11 +8,13 @@ from dataclasses import replace
 import numpy as np
 
 from wildfire.calibration import exact_f1_threshold, optimize_ordered_thresholds
+from wildfire.fusion import BurnFusionComponents, fuse_burn_score
 from wildfire.model_config import ModelConfig
 
 
 AFTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
 BSTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
+BSFusionTrainingSample = tuple[BurnFusionComponents, np.ndarray]
 
 
 def threshold_grid(minimum: float, maximum: float, step: float) -> list[float]:
@@ -161,3 +163,111 @@ def calibrate_bs_thresholds(
     }
     calibrated = replace(base_config, bs=bs, training=metadata)
     return calibrated, result
+
+
+def calibrate_bs_cloud_sar_fallback(
+    samples: Iterable[BSFusionTrainingSample],
+    base_config: ModelConfig,
+    *,
+    cloud_weight_candidates: Iterable[float] = (
+        -0.50,
+        -0.25,
+        -0.10,
+        -0.05,
+        0.0,
+        0.05,
+        0.10,
+        0.25,
+        0.50,
+    ),
+    max_candidates: int = 64,
+    passes: int = 3,
+) -> tuple[ModelConfig, dict[str, object]]:
+    """Select cloud SAR fallback only when it improves the BS competition objective.
+
+    Candidate zero reproduces the previous masking behavior, so the optimizer
+    always has a route back to the baseline on the same calibration pixels.
+    """
+    materialized = list(samples)
+    if not materialized:
+        raise ValueError("no BS fusion training samples were supplied")
+
+    candidates = sorted(
+        {
+            float(value)
+            for value in (*cloud_weight_candidates, base_config.bs.cloud_sar_weight, 0.0)
+        }
+    )
+
+    rows: list[dict[str, object]] = []
+    best_config = base_config
+    best_result: dict[str, object] | None = None
+    best_key: tuple[float, float] | None = None
+
+    for cloud_weight in candidates:
+        score_parts: list[np.ndarray] = []
+        target_parts: list[np.ndarray] = []
+        valid_parts: list[np.ndarray] = []
+
+        for components, target in materialized:
+            score, valid = fuse_burn_score(
+                components,
+                clear_sar_weight=base_config.bs.sar_weight,
+                cloud_sar_weight=cloud_weight,
+                sar_clip=base_config.bs.sar_clip,
+            )
+            target_array = np.asarray(target)
+            if target_array.shape != score.shape:
+                raise ValueError("BS fusion target and score shapes differ")
+            score_parts.append(score.ravel())
+            target_parts.append(target_array.ravel())
+            valid_parts.append(valid.ravel())
+
+        scores = np.concatenate(score_parts)
+        targets = np.concatenate(target_parts)
+        valid = np.concatenate(valid_parts)
+
+        result = optimize_ordered_thresholds(
+            scores,
+            targets,
+            valid,
+            initial=base_config.bs.default_thresholds,
+            max_candidates=max_candidates,
+            passes=passes,
+        )
+        row = {
+            "cloud_sar_weight": cloud_weight,
+            **result,
+        }
+        rows.append(row)
+
+        key = (
+            float(result["bs_subscore"]),
+            -abs(cloud_weight - base_config.bs.cloud_sar_weight),
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_result = row
+            thresholds = tuple(float(value) for value in result["thresholds"])
+            best_config = replace(
+                base_config,
+                bs=replace(
+                    base_config.bs,
+                    cloud_sar_weight=cloud_weight,
+                    default_thresholds=thresholds,
+                    natural_open_thresholds=thresholds,
+                    crop_thresholds=thresholds,
+                    forest_thresholds=thresholds,
+                ),
+            )
+
+    assert best_result is not None
+    metadata = dict(best_config.training)
+    metadata["bs_cloud_sar_calibration"] = {
+        "method": "metric_aware_grid_with_zero_fallback_anchor",
+        "samples": len(materialized),
+        "baseline_anchor_cloud_sar_weight": 0.0,
+        "chosen_cloud_sar_weight": best_config.bs.cloud_sar_weight,
+        "candidates": rows,
+    }
+    return replace(best_config, training=metadata), best_result
