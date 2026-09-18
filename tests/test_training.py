@@ -2,8 +2,8 @@ import numpy as np
 
 from wildfire.constants import LC_CROP, LC_TREE
 from wildfire.fusion import BurnFusionComponents
-from wildfire.model_config import ModelConfig
 from wildfire.metrics import binary_iou, severity_miou
+from wildfire.model_config import ModelConfig
 from wildfire.training import (
     apply_landcover_thresholds,
     calibrate_af_threshold,
