@@ -28,6 +28,7 @@ AF_CANDIDATE_NAMES: tuple[str, ...] = (
     "I4_ANOMALY_9",
     "I45_ANOMALY_5",
     "HARD_NEG_CONTEXT",
+    "HARD_NEG_CONTEXT_PERSISTENT",
 )
 
 
@@ -161,11 +162,25 @@ def active_fire_score_candidates(
             0.0,
         ).astype(np.float32, copy=False)
 
-    candidates["HARD_NEG_CONTEXT"] = _hard_negative_context_score(
+    hard_negative = _hard_negative_context_score(
         channels,
         features,
         valid,
     )
+    candidates["HARD_NEG_CONTEXT"] = hard_negative
+
+    persistent = hard_negative
+    if "PERSISTENT_HEAT_PRIOR" in channels:
+        prior = np.asarray(channels["PERSISTENT_HEAT_PRIOR"], dtype=np.float32)
+        if prior.shape != hard_negative.shape:
+            raise ValueError("PERSISTENT_HEAT_PRIOR shape differs from I4/I5")
+        safe_prior = np.where(np.isfinite(prior), np.clip(prior, 0.0, 1.0), 0.0)
+        persistent = hard_negative - 1.5 * safe_prior
+    candidates["HARD_NEG_CONTEXT_PERSISTENT"] = np.where(
+        valid & np.isfinite(persistent),
+        persistent,
+        0.0,
+    ).astype(np.float32, copy=False)
     return candidates, valid
 
 
