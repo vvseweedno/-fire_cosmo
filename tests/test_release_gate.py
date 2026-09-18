@@ -17,6 +17,11 @@ def _evidence() -> dict[str, object]:
     return {
         "ci": {"green": True},
         "preflight": {"train": {"ok": True}, "test": {"ok": True}},
+        "leakage_audit": {
+            "strict_event_grouping": True,
+            "chip_fallbacks": 0,
+            "event_group_coverage": 1.0,
+        },
         "crossfit": {"baseline": baseline, "final": final},
         "bootstrap": {
             "n_boot_used": 2000,
@@ -64,3 +69,15 @@ def test_proven_release_rejects_different_submission_bytes():
     report = evaluate_proven_release(evidence)
     assert report["proven"] is False
     assert report["checks"]["submission_validator_and_sha256"]["pass"] is False
+
+
+def test_proven_release_rejects_chip_level_group_fallback():
+    evidence = _evidence()
+    evidence["leakage_audit"] = {
+        "strict_event_grouping": False,
+        "chip_fallbacks": 3,
+        "event_group_coverage": 0.8,
+    }
+    report = evaluate_proven_release(evidence)
+    assert report["proven"] is False
+    assert report["checks"]["strict_leakage_grouping"]["pass"] is False
