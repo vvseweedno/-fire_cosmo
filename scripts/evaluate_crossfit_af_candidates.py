@@ -17,7 +17,7 @@ def main() -> None:
         "--output",
         default="outputs/crossfit_af_candidate_ensemble.json",
     )
-    parser.add_argument("--alpha-steps", type=int, default=20)
+    parser.add_argument("--alpha-steps", type=int, default=20)\n    parser.add_argument("--epsilon", type=float, default=1e-4)
     args = parser.parse_args()
 
     manifest = json.loads(Path(args.fold_manifest).read_text(encoding="utf-8"))
