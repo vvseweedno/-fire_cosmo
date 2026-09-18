@@ -6,7 +6,7 @@ inference adapters can consume an observation without pretending that every
 sensor named in the public case is already supported end-to-end.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from dataclasses import dataclass
 from datetime import datetime
