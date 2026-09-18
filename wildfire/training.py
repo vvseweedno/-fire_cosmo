@@ -2,9 +2,6 @@
 
 import numpy as np
 
-from .evaluation import BinaryAccumulator
-from .model_config import ModelConfig
-
 
 AFTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
 
@@ -24,8 +21,8 @@ def threshold_grid(minimum: float, maximum: float, step: float) -> list[float]:
 def calibrate_af_threshold(
     samples,
     thresholds: list[float],
-    base_config: ModelConfig,
-) -> tuple[ModelConfig, list[dict[str, float | int]]]:
+    base_config,
+):
     """Maximise micro-F1 on the supplied training partition.
 
     Ties prefer a threshold closest to the baseline default and then the higher
@@ -34,18 +31,23 @@ def calibrate_af_threshold(
     candidates = [float(value) for value in thresholds]
     if not candidates:
         raise ValueError("threshold grid is empty")
-    accumulators = {value: BinaryAccumulator() for value in candidates}
+
+    counts = {value: {"tp": 0, "fp": 0, "fn": 0} for value in candidates}
     sample_count = 0
 
     for score, target, model_valid in samples:
         score_array = np.asarray(score, dtype=np.float32)
-        target_array = np.asarray(target)
+        target_array = np.asarray(target) > 0
         valid_array = np.asarray(model_valid, dtype=bool)
         if score_array.shape != target_array.shape or score_array.shape != valid_array.shape:
             raise ValueError("score, target and model_valid shapes must match")
-        for value, accumulator in accumulators.items():
+
+        for value in candidates:
             pred = (score_array >= value) & valid_array
-            accumulator.update(pred, target_array > 0)
+            truth = target_array & valid_array
+            counts[value]["tp"] += int(np.count_nonzero(pred & truth))
+            counts[value]["fp"] += int(np.count_nonzero(pred & ~truth))
+            counts[value]["fn"] += int(np.count_nonzero(~pred & truth))
         sample_count += 1
 
     if sample_count == 0:
@@ -53,14 +55,18 @@ def calibrate_af_threshold(
 
     trace: list[dict[str, float | int]] = []
     for value in candidates:
-        metric = accumulators[value]
+        tp = counts[value]["tp"]
+        fp = counts[value]["fp"]
+        fn = counts[value]["fn"]
+        denom = 2 * tp + fp + fn
+        f1 = 1.0 if denom == 0 else (2.0 * tp) / denom
         trace.append(
             {
                 "threshold": value,
-                "f1": metric.f1,
-                "tp": metric.tp,
-                "fp": metric.fp,
-                "fn": metric.fn,
+                "f1": f1,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
             }
         )
 
@@ -93,7 +99,7 @@ def calibrate_af_threshold(
         built_penalty=base_config.af.built_penalty,
         bare_penalty=base_config.af.bare_penalty,
     )
-    calibrated = ModelConfig(
+    calibrated = type(base_config)(
         version=base_config.version,
         af=calibrated_af,
         bs=base_config.bs,
