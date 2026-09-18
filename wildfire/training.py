@@ -312,7 +312,7 @@ def _landcover_masks(landcover: np.ndarray) -> dict[str, np.ndarray]:
     }
 
 
-def _predict_landcover_thresholds(
+def apply_landcover_thresholds(
     scores: np.ndarray,
     valid: np.ndarray,
     landcover: np.ndarray,
@@ -378,7 +378,7 @@ def calibrate_bs_landcover_thresholds(
     landcover = np.concatenate(landcover_parts)
 
     current = base_config
-    current_prediction = _predict_landcover_thresholds(
+    current_prediction = apply_landcover_thresholds(
         scores,
         valid,
         landcover,
@@ -424,7 +424,7 @@ def calibrate_bs_landcover_thresholds(
             candidate_thresholds = tuple(float(value) for value in local["thresholds"])
             candidate_bs = replace(current.bs, **{attr: candidate_thresholds})
             candidate = replace(current, bs=candidate_bs)
-            prediction = _predict_landcover_thresholds(
+            prediction = apply_landcover_thresholds(
                 scores,
                 valid,
                 landcover,
@@ -455,7 +455,7 @@ def calibrate_bs_landcover_thresholds(
         if not changed:
             break
 
-    final_prediction = _predict_landcover_thresholds(
+    final_prediction = apply_landcover_thresholds(
         scores,
         valid,
         landcover,
