@@ -136,6 +136,14 @@ def bs_competition_subscore(prediction: np.ndarray, target: np.ndarray) -> float
     return 0.35 * binary_iou(pred > 0, truth > 0) + 0.30 * severity_miou(pred, truth)
 
 
+def _sample_for_quantiles(values: np.ndarray, limit: int = 2_000_000) -> np.ndarray:
+    """Deterministically cap quantile work without random sampling."""
+    if values.size <= limit:
+        return values
+    step = int(np.ceil(values.size / limit))
+    return values[::step][:limit]
+
+
 def _candidate_thresholds(
     scores: np.ndarray,
     target: np.ndarray,
@@ -154,23 +162,27 @@ def _candidate_thresholds(
     if values.size == 0:
         raise ValueError("no finite valid BS scores are available")
 
-    unique = np.unique(values)
     candidates: list[float] = []
-    if unique.size <= max_candidates:
-        candidates.extend(float(value) for value in unique)
+    if values.size <= max_candidates:
+        candidates.extend(float(value) for value in np.unique(values))
     else:
+        sampled = _sample_for_quantiles(values)
         candidates.extend(
             float(value)
-            for value in np.quantile(values, np.linspace(0.0, 1.0, max_candidates))
+            for value in np.quantile(
+                sampled,
+                np.linspace(0.0, 1.0, max_candidates),
+            )
         )
         per_class = max(4, max_candidates // 8)
         for class_id in (0, 1, 2, 3):
             class_values = score[usable & (truth == class_id)]
             if class_values.size:
+                class_sample = _sample_for_quantiles(class_values)
                 candidates.extend(
                     float(value)
                     for value in np.quantile(
-                        class_values,
+                        class_sample,
                         np.linspace(0.0, 1.0, per_class),
                     )
                 )
@@ -178,6 +190,89 @@ def _candidate_thresholds(
     candidates.extend(float(value) for value in anchors)
     clean = sorted({round(value, 10) for value in candidates if np.isfinite(value)})
     return np.asarray(clean, dtype=np.float64)
+
+
+def _binned_truth_counts(
+    score: np.ndarray,
+    truth: np.ndarray,
+    usable: np.ndarray,
+    candidates: np.ndarray,
+    *,
+    chunk_size: int = 2_000_000,
+) -> np.ndarray:
+    """Aggregate truth classes into candidate-defined score bins.
+
+    Columns are: non-burn, severity 1, severity 2, severity 3, other burn.
+    The output is tiny: (candidate_count + 1) x 5.
+    """
+    bins = np.zeros((candidates.size + 1, 5), dtype=np.int64)
+    flat_score = np.asarray(score, dtype=np.float64).ravel()
+    flat_truth = np.asarray(truth).ravel()
+    flat_usable = np.asarray(usable, dtype=bool).ravel()
+    usable_indices = np.flatnonzero(flat_usable)
+
+    for start in range(0, usable_indices.size, chunk_size):
+        index = usable_indices[start : start + chunk_size]
+        values = flat_score[index]
+        labels = flat_truth[index]
+
+        score_bin = np.searchsorted(candidates, values, side="right")
+        category = np.zeros(labels.shape, dtype=np.int8)
+        category[labels == 1] = 1
+        category[labels == 2] = 2
+        category[labels == 3] = 3
+        category[(labels > 0) & ~np.isin(labels, (1, 2, 3))] = 4
+
+        packed = score_bin * 5 + category
+        counts = np.bincount(
+            packed,
+            minlength=(candidates.size + 1) * 5,
+        ).reshape(candidates.size + 1, 5)
+        bins += counts.astype(np.int64, copy=False)
+
+    return bins
+
+
+def _threshold_objective_from_bins(
+    prefix: np.ndarray,
+    candidates: np.ndarray,
+    thresholds: tuple[float, float, float],
+    total_truth_burn: int,
+    total_truth_classes: tuple[int, int, int],
+) -> tuple[float, float, float]:
+    """Return burn IoU, severity mIoU, weighted BS subscore."""
+
+    def boundary(threshold: float) -> int:
+        index = int(np.searchsorted(candidates, threshold, side="left"))
+        return min(max(index + 1, 0), prefix.shape[0] - 1)
+
+    b1, b2, b3 = (boundary(value) for value in thresholds)
+    if not b1 < b2 < b3:
+        raise ValueError("threshold boundaries must be strictly increasing")
+
+    end = prefix.shape[0] - 1
+    class1 = prefix[b2] - prefix[b1]
+    class2 = prefix[b3] - prefix[b2]
+    class3 = prefix[end] - prefix[b3]
+    burn_pred = prefix[end] - prefix[b1]
+
+    burn_tp = int(np.sum(burn_pred[1:]))
+    burn_fp = int(burn_pred[0])
+    burn_denom = total_truth_burn + burn_fp
+    burn_iou = 1.0 if burn_denom == 0 else burn_tp / burn_denom
+
+    intervals = (class1, class2, class3)
+    ious: list[float] = []
+    for class_index, counts in enumerate(intervals, start=1):
+        predicted = int(np.sum(counts))
+        intersection = int(counts[class_index])
+        truth_count = total_truth_classes[class_index - 1]
+        union = truth_count + predicted - intersection
+        ious.append(1.0 if union == 0 else intersection / union)
+
+    severity_miou_value = float(np.mean(ious))
+    objective = 0.35 * burn_iou + 0.30 * severity_miou_value
+    return float(burn_iou), severity_miou_value, float(objective)
 
 
 def optimize_ordered_thresholds(
@@ -189,7 +284,12 @@ def optimize_ordered_thresholds(
     max_candidates: int = 64,
     passes: int = 3,
 ) -> dict[str, object]:
-    """Coordinate-search ordered BS thresholds against the actual score formula."""
+    """Coordinate-search ordered BS thresholds against the actual score formula.
+
+    Candidate evaluation uses a compact histogram of score bins rather than
+    materialising a full prediction mask for every trial. This preserves the
+    competition objective while making wider threshold searches practical.
+    """
     if passes < 1:
         raise ValueError("passes must be positive")
 
@@ -208,9 +308,26 @@ def optimize_ordered_thresholds(
         max_candidates=max_candidates,
         anchors=initial,
     )
+    usable = mask & np.isfinite(score)
+    bins = _binned_truth_counts(score, truth, usable, candidates)
+    prefix = np.zeros((bins.shape[0] + 1, bins.shape[1]), dtype=np.int64)
+    prefix[1:] = np.cumsum(bins, axis=0)
+
+    flat_truth = truth.ravel()
+    total_truth_burn = int(np.count_nonzero(flat_truth > 0))
+    total_truth_classes = tuple(
+        int(np.count_nonzero(flat_truth == class_id))
+        for class_id in (1, 2, 3)
+    )
+
     current = tuple(float(value) for value in initial)
-    current_prediction = apply_ordered_thresholds(score, current, mask)
-    current_score = bs_competition_subscore(current_prediction, truth)
+    _, _, current_score = _threshold_objective_from_bins(
+        prefix,
+        candidates,
+        current,
+        total_truth_burn,
+        total_truth_classes,
+    )
     trace: list[dict[str, object]] = []
 
     for pass_index in range(passes):
@@ -229,8 +346,13 @@ def optimize_ordered_thresholds(
                     continue
 
                 proposed_tuple = tuple(proposed)
-                prediction = apply_ordered_thresholds(score, proposed_tuple, mask)
-                objective = bs_competition_subscore(prediction, truth)
+                _, _, objective = _threshold_objective_from_bins(
+                    prefix,
+                    candidates,
+                    proposed_tuple,
+                    total_truth_burn,
+                    total_truth_classes,
+                )
                 distance = sum(
                     abs(proposed_tuple[index] - initial[index]) for index in range(3)
                 )
@@ -256,12 +378,18 @@ def optimize_ordered_thresholds(
         if not pass_improved:
             break
 
-    final_prediction = apply_ordered_thresholds(score, current, mask)
+    iou_burn, miou_severity, final_score = _threshold_objective_from_bins(
+        prefix,
+        candidates,
+        current,
+        total_truth_burn,
+        total_truth_classes,
+    )
     return {
         "thresholds": current,
-        "bs_subscore": float(current_score),
-        "iou_burn": float(binary_iou(final_prediction > 0, truth > 0)),
-        "miou_severity": float(severity_miou(final_prediction, truth)),
+        "bs_subscore": float(final_score),
+        "iou_burn": float(iou_burn),
+        "miou_severity": float(miou_severity),
         "candidate_count": int(candidates.size),
         "trace": trace,
     }
