@@ -33,12 +33,8 @@ from inference import run as run_inference
 from scripts.generate_af_candidate_oof import run as generate_af_candidate_oof
 from scripts.generate_baseline_oof import run as generate_baseline_oof
 from scripts.generate_bs_candidate_oof import run as generate_bs_candidate_oof
-from scripts.optimize_af_candidate_ensemble import (
-    run as optimize_af_candidate_ensemble,
-)
-from scripts.optimize_bs_candidate_ensemble import (
-    run as optimize_bs_candidate_ensemble,
-)
+from scripts.optimize_af_candidate_ensemble import run as optimize_af_candidate_ensemble
+from scripts.optimize_bs_candidate_ensemble import run as optimize_bs_candidate_ensemble
 from scripts.preflight_dataset import run as preflight
 from wildfire.af_ensemble_validation import crossfit_af_candidate_ensemble
 from wildfire.bs_ensemble_validation import crossfit_bs_candidate_ensemble
