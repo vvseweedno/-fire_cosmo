@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - ready-prototype
+      - ready-prototype-final
   pull_request:
 
 jobs:
