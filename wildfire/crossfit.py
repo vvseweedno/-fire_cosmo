@@ -6,14 +6,14 @@ from dataclasses import replace
 
 import numpy as np
 
-from wildfire.calibration import (
-    apply_ordered_thresholds,
-    exact_f1_threshold,
-    optimize_ordered_thresholds,
-)
+from wildfire.calibration import exact_f1_threshold, optimize_ordered_thresholds
 from wildfire.evaluation import CompetitionEvaluator
 from wildfire.model_config import ModelConfig
 from wildfire.oof import OOFPool, OOFRecord
+from wildfire.training import (
+    apply_landcover_thresholds,
+    calibrate_bs_landcover_thresholds,
+)
 
 
 def _assignment_from_manifest(manifest: dict[str, object]) -> dict[str, int]:
@@ -55,6 +55,12 @@ def _concat_task(
     )
 
 
+def _landcover(record: OOFRecord) -> np.ndarray:
+    if record.landcover is not None:
+        return np.asarray(record.landcover)
+    return np.full(record.score.shape, -1, dtype=np.int16)
+
+
 def crossfit_calibrate_and_evaluate(
     pool: OOFPool,
     fold_manifest: dict[str, object],
@@ -62,12 +68,12 @@ def crossfit_calibrate_and_evaluate(
     *,
     bs_max_candidates: int = 64,
     bs_passes: int = 3,
+    bs_landcover_passes: int = 2,
 ) -> tuple[ModelConfig, dict[str, object]]:
-    """Evaluate each fold using thresholds calibrated only on the other folds.
+    """Evaluate each fold using calibration parameters fitted on other folds only.
 
-    Returns:
-    - a final deployment config calibrated on all OOF predictions;
-    - a report whose primary score is the cross-fitted estimate.
+    Global AF/BS thresholds and optional land-cover-specific BS thresholds are
+    all cross-fitted. Fold-k labels never choose fold-k thresholds.
     """
     assignment = _assignment_from_manifest(fold_manifest)
     pool.validate_expected(set(assignment))
@@ -89,7 +95,11 @@ def crossfit_calibrate_and_evaluate(
 
         af_scores, af_target, af_valid = _concat_task(calibration_records, "AF")
         af_result = exact_f1_threshold(af_scores, af_target, af_valid)
+        af_threshold = float(af_result["threshold"])
 
+        bs_calibration = tuple(
+            record for record in calibration_records if record.task.upper() == "BS"
+        )
         bs_scores, bs_target, bs_valid = _concat_task(calibration_records, "BS")
         bs_result = optimize_ordered_thresholds(
             bs_scores,
@@ -100,7 +110,31 @@ def crossfit_calibrate_and_evaluate(
             passes=bs_passes,
         )
         thresholds = tuple(float(value) for value in bs_result["thresholds"])
-        af_threshold = float(af_result["threshold"])
+        fold_config = replace(
+            base_config,
+            af=replace(base_config.af, threshold=af_threshold),
+            bs=replace(
+                base_config.bs,
+                default_thresholds=thresholds,
+                natural_open_thresholds=thresholds,
+                crop_thresholds=thresholds,
+                forest_thresholds=thresholds,
+            ),
+        )
+        fold_config, landcover_result = calibrate_bs_landcover_thresholds(
+            (
+                (
+                    np.asarray(record.score),
+                    np.asarray(record.target),
+                    np.asarray(record.valid, dtype=bool),
+                    _landcover(record),
+                )
+                for record in bs_calibration
+            ),
+            fold_config,
+            max_candidates=bs_max_candidates,
+            passes=bs_landcover_passes,
+        )
 
         fold_evaluator = CompetitionEvaluator()
         af_holdout = 0
@@ -115,10 +149,11 @@ def crossfit_calibrate_and_evaluate(
                 fold_evaluator.update_af(prediction, record.target)
                 af_holdout += 1
             else:
-                prediction = apply_ordered_thresholds(
-                    record.score,
-                    thresholds,
-                    record.valid,
+                prediction = apply_landcover_thresholds(
+                    np.asarray(record.score),
+                    np.asarray(record.valid, dtype=bool),
+                    _landcover(record),
+                    fold_config,
                 )
                 evaluator.update_bs(prediction, record.target)
                 fold_evaluator.update_bs(prediction, record.target)
@@ -133,7 +168,8 @@ def crossfit_calibrate_and_evaluate(
                 "holdout_AF": af_holdout,
                 "holdout_BS": bs_holdout,
                 "af_threshold": af_threshold,
-                "bs_thresholds": thresholds,
+                "bs_global_thresholds": thresholds,
+                "bs_landcover_thresholds": landcover_result["thresholds"],
                 "f1_af": fold_summary["f1_af"],
                 "iou_burn": fold_summary["iou_burn"],
                 "miou_severity": fold_summary["miou_severity"],
@@ -147,6 +183,7 @@ def crossfit_calibrate_and_evaluate(
         base_config,
         bs_max_candidates=bs_max_candidates,
         bs_passes=bs_passes,
+        bs_landcover_passes=bs_landcover_passes,
     )
     metadata = dict(deployment_config.training)
     metadata["crossfit_validation"] = {
