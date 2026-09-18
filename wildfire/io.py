@@ -1,7 +1,15 @@
-"""Dataset discovery and channel loading without assuming one unpublished layout."""
+"""Dataset discovery and channel loading for both split-band and stacked rasters.
+
+The competition archive layout is intentionally treated as data, not hard-coded
+knowledge.  A stacked GeoTIFF is accepted only when its band names are available
+from GDAL/rasterio band descriptions/tags or an explicit sidecar mapping.  This
+avoids silently assigning the wrong physical channel to a band.
+"""
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -53,8 +61,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "SLOPE": ("slope",),
     "ASPECT": ("aspect",),
     "VALID_MASK": ("valid_mask", "valid", "mask_valid"),
-    # AF observation geometry and ERA5-Land context. These are accepted by the
-    # reader even though the deterministic B0 baseline does not yet consume all.
+    # AF observation geometry and ERA5-Land context.
     "SUN_ZENITH": ("sun_zenith", "solar_zenith", "sza"),
     "SUN_AZIMUTH": ("sun_azimuth", "solar_azimuth", "saa"),
     "SENSOR_ZENITH": ("sensor_zenith", "view_zenith", "vza"),
@@ -68,73 +75,311 @@ ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 SUPPORTED_SUFFIXES = (".npy", ".npz", ".tif", ".tiff")
+_STACK_SUFFIXES = ("features", "feature", "image", "stack", "input", "data")
+
+
+@dataclass(frozen=True)
+class ChannelSource:
+    """Physical source of one logical channel."""
+
+    path: Path
+    band: int | None = None
+    key: str | None = None
 
 
 @dataclass(frozen=True)
 class Chip:
     chip_id: str
     path: Path
-    channels: dict[str, Path]
+    channels: dict[str, ChannelSource]
 
 
-def _normalise_stem(path: Path) -> str:
-    return path.stem.lower().replace("-", "_").replace(" ", "_")
+def _normalise_token(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "_", value)
+    return value.strip("_")
 
 
-def _canonical_name(path: Path) -> str | None:
-    stem = _normalise_stem(path)
+def _canonical_token(value: str | None) -> str | None:
+    if not value:
+        return None
+    token = _normalise_token(value)
     for canonical, aliases in ALIASES.items():
-        if stem in aliases:
+        accepted = {_normalise_token(canonical), *(_normalise_token(x) for x in aliases)}
+        if token in accepted:
             return canonical
-        if any(stem.endswith(f"_{alias}") for alias in aliases):
+        if any(token.endswith(f"_{alias}") for alias in accepted):
             return canonical
     return None
 
 
+def _canonical_name(path: Path) -> str | None:
+    return _canonical_token(path.stem)
+
+
+def _chip_id_from_stack(path: Path) -> str:
+    token = path.stem
+    lowered = _normalise_token(token)
+    for suffix in _STACK_SUFFIXES:
+        marker = f"_{suffix}"
+        if lowered.endswith(marker):
+            return token[: -len(marker)]
+    return token
+
+
+def _sidecar_candidates(path: Path) -> tuple[Path, ...]:
+    candidates = (
+        path.with_suffix(path.suffix + ".bands.json"),
+        path.with_suffix(".bands.json"),
+        path.with_suffix(".channels.json"),
+        path.parent / "bands.json",
+        path.parent / "channels.json",
+        path.parent / "band_map.json",
+    )
+    # Preserve order while avoiding duplicates.
+    return tuple(dict.fromkeys(candidates))
+
+
+def _parse_band_map(payload: object, count: int) -> dict[int, str]:
+    if isinstance(payload, dict):
+        for wrapper in ("bands", "channels", "band_map"):
+            if wrapper in payload:
+                return _parse_band_map(payload[wrapper], count)
+
+        result: dict[int, str] = {}
+        for key, value in payload.items():
+            if isinstance(value, int):
+                band = int(value)
+                name = str(key)
+            elif isinstance(value, str) and str(key).isdigit():
+                band = int(key)
+                name = value
+            else:
+                continue
+            if 1 <= band <= count:
+                result[band] = name
+        return result
+
+    if isinstance(payload, list):
+        return {
+            index: str(name)
+            for index, name in enumerate(payload, start=1)
+            if index <= count and isinstance(name, str)
+        }
+
+    return {}
+
+
+def _sidecar_band_map(path: Path, count: int) -> dict[int, str]:
+    for candidate in _sidecar_candidates(path):
+        if not candidate.exists():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        mapping = _parse_band_map(payload, count)
+        if mapping:
+            return mapping
+    return {}
+
+
+def _tiff_sources(path: Path) -> dict[str, ChannelSource]:
+    if rasterio is None:
+        return {}
+
+    result: dict[str, ChannelSource] = {}
+    with rasterio.open(path) as src:
+        for band in range(1, src.count + 1):
+            candidates: list[str] = []
+            description = src.descriptions[band - 1]
+            if description:
+                candidates.append(description)
+            tags = src.tags(band)
+            for key in ("name", "band_name", "channel", "description", "long_name"):
+                value = tags.get(key)
+                if value:
+                    candidates.append(value)
+
+            canonical = next(
+                (
+                    name
+                    for name in (_canonical_token(value) for value in candidates)
+                    if name is not None
+                ),
+                None,
+            )
+            if canonical and canonical not in result:
+                result[canonical] = ChannelSource(path=path, band=band)
+
+        if not result:
+            for band, raw_name in _sidecar_band_map(path, src.count).items():
+                canonical = _canonical_token(raw_name)
+                if canonical and canonical not in result:
+                    result[canonical] = ChannelSource(path=path, band=band)
+
+        if src.count == 1:
+            canonical = _canonical_name(path)
+            if canonical and canonical not in result:
+                result[canonical] = ChannelSource(path=path, band=1)
+
+    return result
+
+
+def _npz_sources(path: Path) -> dict[str, ChannelSource]:
+    result: dict[str, ChannelSource] = {}
+    try:
+        with np.load(path, allow_pickle=False) as payload:
+            for key in payload.files:
+                canonical = _canonical_token(key)
+                if canonical and canonical not in result:
+                    result[canonical] = ChannelSource(path=path, key=key)
+    except (OSError, ValueError):
+        return {}
+    return result
+
+
+def _embedded_sources(path: Path) -> dict[str, ChannelSource]:
+    suffix = path.suffix.lower()
+    if suffix in {".tif", ".tiff"}:
+        return _tiff_sources(path)
+    if suffix == ".npz":
+        return _npz_sources(path)
+    return {}
+
+
 def discover_chips(data_dir: str | Path) -> list[Chip]:
-    """Treat each directory containing recognised channel files as a chip."""
+    """Discover chips without silently guessing multiband channel order.
+
+    Supported layouts:
+    - one directory per chip with one file per channel;
+    - one stacked GeoTIFF/NPZ per chip when channel names are embedded;
+    - stacked GeoTIFF plus an explicit *.bands.json / channels.json sidecar.
+    """
+
     root = Path(data_dir)
     if not root.exists():
         raise FileNotFoundError(root)
 
-    by_dir: dict[Path, dict[str, Path]] = {}
-    for path in root.rglob("*"):
+    by_identity: dict[tuple[Path, str], dict[str, ChannelSource]] = {}
+
+    for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
             continue
+
+        embedded = _embedded_sources(path)
+        if len(embedded) >= 2:
+            chip_id = _chip_id_from_stack(path)
+            identity = (path.parent, chip_id)
+            by_identity.setdefault(identity, {}).update(embedded)
+            continue
+
         canonical = _canonical_name(path)
         if canonical:
-            by_dir.setdefault(path.parent, {})[canonical] = path
+            identity = (path.parent, path.parent.name)
+            source = (
+                next(iter(embedded.values()))
+                if embedded
+                else ChannelSource(path=path)
+            )
+            by_identity.setdefault(identity, {})[canonical] = source
 
     chips = [
-        Chip(chip_id=directory.name, path=directory, channels=channels)
-        for directory, channels in by_dir.items()
+        Chip(chip_id=chip_id, path=directory, channels=channels)
+        for (directory, chip_id), channels in by_identity.items()
         if channels
     ]
+
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for chip in chips:
+        if chip.chip_id in seen:
+            duplicates.add(chip.chip_id)
+        seen.add(chip.chip_id)
+    if duplicates:
+        raise ValueError(
+            "Duplicate chip ids discovered in different directories: "
+            + ", ".join(sorted(duplicates)[:10])
+        )
+
     return sorted(chips, key=lambda item: item.chip_id)
 
 
 def read_array(path: Path) -> np.ndarray:
+    """Backward-compatible single-array reader."""
+
     suffix = path.suffix.lower()
     if suffix == ".npy":
-        return np.load(path)
+        return np.load(path, allow_pickle=False)
     if suffix == ".npz":
-        payload = np.load(path)
-        if len(payload.files) != 1:
-            raise ValueError(f"{path}: NPZ must contain exactly one array")
-        return payload[payload.files[0]]
+        with np.load(path, allow_pickle=False) as payload:
+            if len(payload.files) != 1:
+                raise ValueError(f"{path}: NPZ contains multiple arrays; use load_channels")
+            return np.asarray(payload[payload.files[0]])
     if suffix in {".tif", ".tiff"}:
         if rasterio is None:
             raise RuntimeError("rasterio is required for GeoTIFF input")
         with rasterio.open(path) as src:
+            if src.count != 1:
+                raise ValueError(
+                    f"{path}: multiband GeoTIFF requires band descriptions/tags "
+                    "or an explicit sidecar mapping"
+                )
             return src.read(1)
     raise ValueError(f"Unsupported raster format: {path}")
 
 
+def _read_source(source: ChannelSource) -> np.ndarray:
+    suffix = source.path.suffix.lower()
+
+    if suffix == ".npy":
+        return np.load(source.path, allow_pickle=False)
+
+    if suffix == ".npz":
+        with np.load(source.path, allow_pickle=False) as payload:
+            if source.key is not None:
+                return np.asarray(payload[source.key])
+            if len(payload.files) != 1:
+                raise ValueError(
+                    f"{source.path}: NPZ contains multiple arrays but channel key is missing"
+                )
+            return np.asarray(payload[payload.files[0]])
+
+    if suffix in {".tif", ".tiff"}:
+        if rasterio is None:
+            raise RuntimeError("rasterio is required for GeoTIFF input")
+        with rasterio.open(source.path) as src:
+            band = source.band
+            if band is None:
+                if src.count != 1:
+                    raise ValueError(
+                        f"{source.path}: multiband source is missing an explicit band index"
+                    )
+                band = 1
+            if band < 1 or band > src.count:
+                raise ValueError(
+                    f"{source.path}: band index {band} outside 1..{src.count}"
+                )
+            return src.read(band)
+
+    raise ValueError(f"Unsupported raster format: {source.path}")
+
+
 def load_channels(chip: Chip) -> dict[str, np.ndarray]:
-    return {name: read_array(path) for name, path in chip.channels.items()}
+    channels = {name: _read_source(source) for name, source in chip.channels.items()}
+    if not channels:
+        return channels
+
+    shapes = {name: tuple(np.asarray(array).shape) for name, array in channels.items()}
+    unique_shapes = set(shapes.values())
+    if len(unique_shapes) != 1:
+        raise ValueError(f"{chip.chip_id}: channel shapes differ: {shapes}")
+    return channels
 
 
-def infer_task(channels: dict[str, np.ndarray] | dict[str, Path]) -> str:
+def infer_task(
+    channels: dict[str, np.ndarray] | dict[str, ChannelSource],
+) -> str:
     names = set(channels)
     if {"I4", "I5"} <= names:
         return "AF"

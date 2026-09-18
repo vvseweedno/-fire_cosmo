@@ -11,13 +11,13 @@ from pathlib import Path
 
 import numpy as np
 
-from wildfire.calibration import (
-    apply_ordered_thresholds,
-    exact_f1_threshold,
-    optimize_ordered_thresholds,
-)
+from wildfire.calibration import exact_f1_threshold, optimize_ordered_thresholds
 from wildfire.evaluation import CompetitionEvaluator
 from wildfire.model_config import ModelConfig
+from wildfire.training import (
+    apply_landcover_thresholds,
+    calibrate_bs_landcover_thresholds,
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,7 @@ class OOFRecord:
     score: np.ndarray
     target: np.ndarray
     valid: np.ndarray
+    landcover: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         task = self.task.upper()
@@ -36,6 +37,8 @@ class OOFRecord:
             raise ValueError("chip_id must not be empty")
         if self.score.shape != self.target.shape or self.score.shape != self.valid.shape:
             raise ValueError(f"{self.chip_id}: score/target/valid shapes differ")
+        if self.landcover is not None and self.landcover.shape != self.score.shape:
+            raise ValueError(f"{self.chip_id}: landcover shape differs from score")
 
 
 class OOFPool:
@@ -74,12 +77,19 @@ class OOFPool:
             np.concatenate([record.valid.astype(bool).ravel() for record in records]),
         )
 
+    @staticmethod
+    def _landcover(record: OOFRecord) -> np.ndarray:
+        if record.landcover is not None:
+            return np.asarray(record.landcover)
+        return np.full(record.score.shape, -1, dtype=np.int16)
+
     def calibrate_and_evaluate(
         self,
         base_config: ModelConfig,
         *,
         bs_max_candidates: int = 64,
         bs_passes: int = 3,
+        bs_landcover_passes: int = 2,
     ) -> tuple[ModelConfig, dict[str, object]]:
         af_records = tuple(record for record in self.records if record.task.upper() == "AF")
         bs_records = tuple(record for record in self.records if record.task.upper() == "BS")
@@ -99,33 +109,9 @@ class OOFPool:
             passes=bs_passes,
         )
         bs_thresholds = tuple(float(value) for value in bs_result["thresholds"])
-
-        evaluator = CompetitionEvaluator()
         af_threshold = float(af_result["threshold"])
-        for record in af_records:
-            prediction = (
-                (np.asarray(record.score) >= af_threshold)
-                & np.asarray(record.valid, dtype=bool)
-            ).astype(np.uint8)
-            evaluator.update_af(prediction, record.target)
 
-        for record in bs_records:
-            prediction = apply_ordered_thresholds(
-                record.score,
-                bs_thresholds,
-                record.valid,
-            )
-            evaluator.update_bs(prediction, record.target)
-
-        metadata = dict(base_config.training)
-        metadata["oof_calibration"] = {
-            "chips": len(self._records),
-            "af_chips": len(af_records),
-            "bs_chips": len(bs_records),
-            "af": af_result,
-            "bs": bs_result,
-        }
-        calibrated = replace(
+        global_config = replace(
             base_config,
             af=replace(base_config.af, threshold=af_threshold),
             bs=replace(
@@ -135,20 +121,68 @@ class OOFPool:
                 crop_thresholds=bs_thresholds,
                 forest_thresholds=bs_thresholds,
             ),
-            training=metadata,
         )
+        calibrated, landcover_result = calibrate_bs_landcover_thresholds(
+            (
+                (
+                    np.asarray(record.score),
+                    np.asarray(record.target),
+                    np.asarray(record.valid, dtype=bool),
+                    self._landcover(record),
+                )
+                for record in bs_records
+            ),
+            global_config,
+            max_candidates=bs_max_candidates,
+            passes=bs_landcover_passes,
+        )
+
+        evaluator = CompetitionEvaluator()
+        for record in af_records:
+            prediction = (
+                (np.asarray(record.score) >= af_threshold)
+                & np.asarray(record.valid, dtype=bool)
+            ).astype(np.uint8)
+            evaluator.update_af(prediction, record.target)
+
+        for record in bs_records:
+            prediction = apply_landcover_thresholds(
+                np.asarray(record.score),
+                np.asarray(record.valid, dtype=bool),
+                self._landcover(record),
+                calibrated,
+            )
+            evaluator.update_bs(prediction, record.target)
+
+        metadata = dict(calibrated.training)
+        metadata["oof_calibration"] = {
+            "chips": len(self._records),
+            "af_chips": len(af_records),
+            "bs_chips": len(bs_records),
+            "bs_chips_with_landcover": sum(
+                record.landcover is not None for record in bs_records
+            ),
+            "af": af_result,
+            "bs_global": bs_result,
+            "bs_landcover": landcover_result,
+        }
+        calibrated = replace(calibrated, training=metadata)
 
         report = evaluator.summary()
         report.update(
             {
                 "calibration": {
                     "af": af_result,
-                    "bs": bs_result,
+                    "bs_global": bs_result,
+                    "bs_landcover": landcover_result,
                 },
                 "oof_chips": {
                     "total": len(self._records),
                     "AF": len(af_records),
                     "BS": len(bs_records),
+                    "BS_with_landcover": sum(
+                        record.landcover is not None for record in bs_records
+                    ),
                 },
             }
         )
@@ -158,14 +192,16 @@ class OOFPool:
 def save_oof_record(record: OOFRecord, path: str | Path) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        output,
-        chip_id=np.asarray(record.chip_id),
-        task=np.asarray(record.task.upper()),
-        score=np.asarray(record.score, dtype=np.float32),
-        target=np.asarray(record.target),
-        valid=np.asarray(record.valid, dtype=np.uint8),
-    )
+    payload: dict[str, np.ndarray] = {
+        "chip_id": np.asarray(record.chip_id),
+        "task": np.asarray(record.task.upper()),
+        "score": np.asarray(record.score, dtype=np.float32),
+        "target": np.asarray(record.target),
+        "valid": np.asarray(record.valid, dtype=np.uint8),
+    }
+    if record.landcover is not None:
+        payload["landcover"] = np.asarray(record.landcover)
+    np.savez_compressed(output, **payload)
 
 
 def load_oof_record(path: str | Path) -> OOFRecord:
@@ -177,12 +213,18 @@ def load_oof_record(path: str | Path) -> OOFRecord:
             raise ValueError(f"{source}: missing OOF arrays {sorted(missing)}")
         chip_id = str(payload["chip_id"].item())
         task = str(payload["task"].item())
+        landcover = (
+            np.asarray(payload["landcover"])
+            if "landcover" in payload.files
+            else None
+        )
         return OOFRecord(
             chip_id=chip_id,
             task=task,
             score=np.asarray(payload["score"], dtype=np.float32),
             target=np.asarray(payload["target"]),
             valid=np.asarray(payload["valid"], dtype=bool),
+            landcover=landcover,
         )
 
 

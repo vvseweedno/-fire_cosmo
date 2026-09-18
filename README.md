@@ -18,12 +18,15 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 
 - официальный micro-metric evaluator;
 - strict template-driven RLE/submission;
-- raw archive inspector и dataset profiler;
+- raw archive inspector, strict dataset preflight и dataset profiler;
+- metadata-safe split-band / multiband GeoTIFF / NPZ channel loading без угадывания порядка каналов;
 - exact AF threshold optimization;
 - ordered BS threshold optimization напрямую по weighted competition subscore;
+- metric-safe land-cover-specific BS threshold refinement с global-score fallback;
 - NBR/dNBR, RBR, RdNBR, NDVI/NDMI, NBR2, MIRBI, BAIS2, temporal/SAR deltas;
 - leakage-safe grouping по fire_event_id;
 - balanced group OOF folds;
+- reproducible baseline OOF score generation;
 - pooled OOF calibration для финального deployment;
 - cross-fitted OOF evaluation для честного сравнения архитектур;
 - cloud-aware optical/SAR fallback с baseline-anchor cloud_sar_weight=0;
@@ -78,6 +81,58 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 11. inference.py → submission.csv.
 12. scripts/validate_submission.py.
 13. Full-test latency benchmark.
+
+## Metric-max workflow на official train
+
+Ниже — путь, который должен пройти финальный конфиг. Он не использует
+геопривязку/даты private test и не подключает готовые продукты пожаров.
+
+```bash
+python scripts/preflight_dataset.py --data-dir /path/to/train --deep
+python scripts/inspect_dataset.py --data-dir /path/to/train --output outputs/inspect.json
+python scripts/profile_dataset.py --data-dir /path/to/train --output outputs/profile.json
+
+python scripts/make_folds.py \
+  --meta /path/to/train/meta.csv \
+  --output splits/folds_seed42.json \
+  --folds 5 --seed 42
+
+python scripts/generate_baseline_oof.py \
+  --data-dir /path/to/train \
+  --fold-manifest splits/folds_seed42.json \
+  --output-dir outputs/oof_baseline
+
+python scripts/evaluate_crossfit_oof.py \
+  --oof-dir outputs/oof_baseline \
+  --fold-manifest splits/folds_seed42.json \
+  --report outputs/crossfit_oof_report.json \
+  --deployment-config artifacts/crossfit_deployment_config.json \
+  --bs-max-candidates 128 --bs-passes 4
+
+python inference.py \
+  --data-dir /path/to/test \
+  --model-config artifacts/crossfit_deployment_config.json \
+  --output submission.csv
+
+python scripts/validate_submission.py \
+  --data-dir /path/to/test \
+  --submission submission.csv
+```
+
+### Multiband safety
+
+Для stacked GeoTIFF порядок каналов не угадывается по позиции. Каналы должны быть
+однозначно названы через band descriptions/tags либо через sidecar
+`*.bands.json` / `*.channels.json`. Неоднозначный multiband raster вызывает
+ошибку вместо тихого чтения band 1.
+
+### Что значит «максимум по метрике»
+
+40/40 в разделе метрики получает решение с лучшим private Score среди валидных
+решений после линейной нормализации организаторов. Репозиторий поэтому
+оптимизирует не «баллы из 40» напрямую, а официальный Score и одновременно
+защищает валидность submission. Ни одна локальная/OOF цифра не объявляется
+гарантией hidden-test результата.
 
 ## Исследовательские ориентиры
 

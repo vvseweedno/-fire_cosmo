@@ -8,6 +8,16 @@ from dataclasses import replace
 import numpy as np
 
 from wildfire.calibration import exact_f1_threshold, optimize_ordered_thresholds
+from wildfire.constants import (
+    LC_CROP,
+    LC_GRASS,
+    LC_MANGROVE,
+    LC_MOSS,
+    LC_SHRUB,
+    LC_TREE,
+    LC_WETLAND,
+)
+from wildfire.evaluation import BinaryAccumulator, SeverityAccumulator
 from wildfire.fusion import BurnFusionComponents, fuse_burn_score
 from wildfire.model_config import ModelConfig
 
@@ -15,6 +25,7 @@ from wildfire.model_config import ModelConfig
 AFTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
 BSTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray]
 BSFusionTrainingSample = tuple[BurnFusionComponents, np.ndarray]
+BSLandcoverTrainingSample = tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 
 
 def threshold_grid(minimum: float, maximum: float, step: float) -> list[float]:
@@ -271,3 +282,210 @@ def calibrate_bs_cloud_sar_fallback(
         "candidates": rows,
     }
     return replace(best_config, training=metadata), best_result
+
+
+def _bs_score(
+    prediction: np.ndarray,
+    target: np.ndarray,
+    valid: np.ndarray,
+) -> tuple[float, float, float]:
+    burn = BinaryAccumulator()
+    severity = SeverityAccumulator()
+    burn.update(prediction > 0, target > 0, valid)
+    severity.update(prediction, target, valid)
+    return burn.iou, severity.miou, 0.35 * burn.iou + 0.30 * severity.miou
+
+
+def _landcover_masks(landcover: np.ndarray) -> dict[str, np.ndarray]:
+    lc = np.asarray(landcover)
+    natural = np.isin(
+        lc,
+        [LC_SHRUB, LC_GRASS, LC_WETLAND, LC_MANGROVE, LC_MOSS],
+    )
+    crop = lc == LC_CROP
+    forest = lc == LC_TREE
+    return {
+        "default": ~(natural | crop | forest),
+        "natural_open": natural,
+        "crop": crop,
+        "forest": forest,
+    }
+
+
+def apply_landcover_thresholds(
+    scores: np.ndarray,
+    valid: np.ndarray,
+    landcover: np.ndarray,
+    config: ModelConfig,
+) -> np.ndarray:
+    groups = _landcover_masks(landcover)
+    thresholds = {
+        "default": config.bs.default_thresholds,
+        "natural_open": config.bs.natural_open_thresholds,
+        "crop": config.bs.crop_thresholds,
+        "forest": config.bs.forest_thresholds,
+    }
+    prediction = np.zeros(scores.shape, dtype=np.uint8)
+    for group_name, group_mask in groups.items():
+        low, moderate, high = thresholds[group_name]
+        active = valid & group_mask
+        prediction[(scores >= low) & active] = 1
+        prediction[(scores >= moderate) & active] = 2
+        prediction[(scores >= high) & active] = 3
+    return prediction
+
+
+def calibrate_bs_landcover_thresholds(
+    samples: Iterable[BSLandcoverTrainingSample],
+    base_config: ModelConfig,
+    *,
+    max_candidates: int = 64,
+    passes: int = 2,
+) -> tuple[ModelConfig, dict[str, object]]:
+    """Monotonic land-cover-specific threshold refinement.
+
+    Each proposed group-specific threshold set is first fitted only on that
+    group's pixels, then accepted only if the *global* weighted BS competition
+    subscore does not decrease.  The current configuration is therefore always
+    a legal fallback on the calibration pool.
+    """
+
+    score_parts: list[np.ndarray] = []
+    target_parts: list[np.ndarray] = []
+    valid_parts: list[np.ndarray] = []
+    landcover_parts: list[np.ndarray] = []
+    sample_count = 0
+
+    for score, target, valid, landcover in samples:
+        s = np.asarray(score, dtype=np.float32)
+        t = np.asarray(target)
+        v = np.asarray(valid, dtype=bool)
+        lc = np.asarray(landcover)
+        if not (s.shape == t.shape == v.shape == lc.shape):
+            raise ValueError("BS landcover calibration arrays must have matching shapes")
+        score_parts.append(s.ravel())
+        target_parts.append(t.ravel())
+        valid_parts.append(v.ravel())
+        landcover_parts.append(lc.ravel())
+        sample_count += 1
+
+    if not score_parts:
+        raise ValueError("no BS landcover calibration samples were supplied")
+
+    scores = np.concatenate(score_parts)
+    targets = np.concatenate(target_parts)
+    valid = np.concatenate(valid_parts)
+    landcover = np.concatenate(landcover_parts)
+
+    current = base_config
+    current_prediction = apply_landcover_thresholds(
+        scores,
+        valid,
+        landcover,
+        current,
+    )
+    current_iou, current_miou, current_score = _bs_score(
+        current_prediction,
+        targets,
+        valid,
+    )
+    trace: list[dict[str, object]] = [
+        {
+            "step": "baseline",
+            "iou_burn": current_iou,
+            "miou_severity": current_miou,
+            "bs_subscore": current_score,
+        }
+    ]
+
+    for pass_index in range(max(1, passes)):
+        changed = False
+        group_masks = _landcover_masks(landcover)
+        for group_name in ("default", "natural_open", "crop", "forest"):
+            group_valid = valid & group_masks[group_name]
+            if not np.any(group_valid):
+                continue
+
+            attr = {
+                "default": "default_thresholds",
+                "natural_open": "natural_open_thresholds",
+                "crop": "crop_thresholds",
+                "forest": "forest_thresholds",
+            }[group_name]
+            initial = getattr(current.bs, attr)
+            local = optimize_ordered_thresholds(
+                scores,
+                targets,
+                group_valid,
+                initial=initial,
+                max_candidates=max_candidates,
+                passes=2,
+            )
+            candidate_thresholds = tuple(float(value) for value in local["thresholds"])
+            candidate_bs = replace(current.bs, **{attr: candidate_thresholds})
+            candidate = replace(current, bs=candidate_bs)
+            prediction = apply_landcover_thresholds(
+                scores,
+                valid,
+                landcover,
+                candidate,
+            )
+            iou_burn, miou_severity, candidate_score = _bs_score(
+                prediction,
+                targets,
+                valid,
+            )
+            accepted = candidate_score >= current_score - 1e-12
+            trace.append(
+                {
+                    "pass": pass_index,
+                    "group": group_name,
+                    "candidate_thresholds": candidate_thresholds,
+                    "iou_burn": iou_burn,
+                    "miou_severity": miou_severity,
+                    "bs_subscore": candidate_score,
+                    "accepted": accepted,
+                }
+            )
+            if accepted and candidate_thresholds != initial:
+                current = candidate
+                current_score = candidate_score
+                changed = True
+
+        if not changed:
+            break
+
+    final_prediction = apply_landcover_thresholds(
+        scores,
+        valid,
+        landcover,
+        current,
+    )
+    final_iou, final_miou, final_score = _bs_score(
+        final_prediction,
+        targets,
+        valid,
+    )
+
+    metadata = dict(current.training)
+    metadata["bs_landcover_threshold_calibration"] = {
+        "method": "group_local_proposal_global_metric_acceptance",
+        "samples": sample_count,
+        "baseline_preserved": True,
+        "iou_burn": final_iou,
+        "miou_severity": final_miou,
+        "bs_subscore": final_score,
+        "trace": trace,
+    }
+    return replace(current, training=metadata), {
+        "iou_burn": final_iou,
+        "miou_severity": final_miou,
+        "bs_subscore": final_score,
+        "thresholds": {
+            "default": current.bs.default_thresholds,
+            "natural_open": current.bs.natural_open_thresholds,
+            "crop": current.bs.crop_thresholds,
+            "forest": current.bs.forest_thresholds,
+        },
+        "trace": trace,
+    }

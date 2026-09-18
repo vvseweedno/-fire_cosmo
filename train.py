@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from wildfire.baselines import active_fire_score
+from wildfire.baselines import active_fire_score, burn_severity_score
 from wildfire.fusion import burn_fusion_components
 from wildfire.io import discover_chips, infer_task, load_channels
 from wildfire.model_config import ModelConfig, load_model_config, save_model_config
@@ -16,8 +16,10 @@ from wildfire.split import read_split_manifest
 from wildfire.training import (
     AFTrainingSample,
     BSFusionTrainingSample,
+    BSLandcoverTrainingSample,
     calibrate_af_threshold_exact,
     calibrate_bs_cloud_sar_fallback,
+    calibrate_bs_landcover_thresholds,
 )
 
 
@@ -62,6 +64,29 @@ def _bs_fusion_samples(
         yield burn_fusion_components(channels), np.asarray(channels["TARGET"])
 
 
+def _bs_landcover_samples(
+    discovered,
+    train_chip_ids: set[str],
+    config: ModelConfig,
+) -> Iterator[BSLandcoverTrainingSample]:
+    for chip_id in sorted(train_chip_ids):
+        chip = discovered[chip_id]
+        channels = load_channels(chip)
+        if "TARGET" not in channels:
+            raise RuntimeError(f"{chip_id}: TARGET is missing")
+        if infer_task(channels) != "BS":
+            continue
+        score, model_valid = burn_severity_score(channels, config)
+        target = np.asarray(channels["TARGET"])
+        landcover = np.asarray(
+            channels.get(
+                "LANDCOVER",
+                np.full(score.shape, -1, dtype=np.int16),
+            )
+        )
+        yield score, target, model_valid, landcover
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
@@ -70,6 +95,7 @@ def main() -> None:
     parser.add_argument("--output", default="artifacts/baseline_config.json")
     parser.add_argument("--bs-max-candidates", type=int, default=64)
     parser.add_argument("--bs-passes", type=int, default=3)
+    parser.add_argument("--bs-landcover-passes", type=int, default=2)
     args = parser.parse_args()
 
     manifest = read_split_manifest(args.split_manifest)
@@ -81,11 +107,17 @@ def main() -> None:
         _af_samples(discovered, train_chip_ids, base_config),
         base_config,
     )
-    final_config, bs_result = calibrate_bs_cloud_sar_fallback(
+    fusion_config, bs_result = calibrate_bs_cloud_sar_fallback(
         _bs_fusion_samples(discovered, train_chip_ids),
         af_config,
         max_candidates=args.bs_max_candidates,
         passes=args.bs_passes,
+    )
+    final_config, landcover_result = calibrate_bs_landcover_thresholds(
+        _bs_landcover_samples(discovered, train_chip_ids, fusion_config),
+        fusion_config,
+        max_candidates=args.bs_max_candidates,
+        passes=args.bs_landcover_passes,
     )
     save_model_config(final_config, args.output)
 
@@ -95,11 +127,17 @@ def main() -> None:
     )
     print(
         "BS cloud-aware calibration: "
-        f"cloud_sar_weight={final_config.bs.cloud_sar_weight:.6f}; "
+        f"cloud_sar_weight={fusion_config.bs.cloud_sar_weight:.6f}; "
         f"thresholds={tuple(round(float(x), 6) for x in bs_result['thresholds'])}; "
         f"burn-IoU={bs_result['iou_burn']:.6f}; "
         f"severity-mIoU={bs_result['miou_severity']:.6f}; "
         f"weighted BS subscore={bs_result['bs_subscore']:.6f}"
+    )
+    print(
+        "BS land-cover refinement: "
+        f"burn-IoU={landcover_result['iou_burn']:.6f}; "
+        f"severity-mIoU={landcover_result['miou_severity']:.6f}; "
+        f"weighted BS subscore={landcover_result['bs_subscore']:.6f}"
     )
     print(f"Saved calibrated model config to {args.output}")
 
