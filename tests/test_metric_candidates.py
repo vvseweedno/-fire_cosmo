@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 from scripts.run_metric_candidates import candidate_configs, choose_winner
 from wildfire.model_config import ModelConfig
 
