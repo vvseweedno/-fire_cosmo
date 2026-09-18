@@ -180,6 +180,21 @@ def _fit_fold_config(
     }
 
 
+def _prediction(
+    chip_id: str,
+    candidates: dict[str, dict[str, OOFRecord]],
+    config: ModelConfig,
+) -> np.ndarray:
+    record = candidates["BASE"][chip_id]
+    score = _fuse_chip(chip_id, candidates, config.bs.score_weights)
+    return apply_landcover_thresholds(
+        score,
+        np.asarray(record.valid, dtype=bool),
+        _landcover(record),
+        config,
+    )
+
+
 def _evaluate(
     ids: list[str],
     candidates: dict[str, dict[str, OOFRecord]],
@@ -189,17 +204,25 @@ def _evaluate(
 ) -> None:
     for chip_id in ids:
         record = candidates["BASE"][chip_id]
-        score = _fuse_chip(chip_id, candidates, config.bs.score_weights)
-        prediction = apply_landcover_thresholds(
-            score,
-            np.asarray(record.valid, dtype=bool),
-            _landcover(record),
-            config,
-        )
-        # Official scoring includes all target pixels; model-invalid pixels are
-        # simply predicted background and remain false negatives when positive.
+        prediction = _prediction(chip_id, candidates, config)
         burn.update(prediction > 0, np.asarray(record.target) > 0)
         severity.update(prediction, np.asarray(record.target))
+
+
+def _save_prediction(
+    root: Path,
+    variant: str,
+    chip_id: str,
+    prediction: np.ndarray,
+    target: np.ndarray,
+) -> None:
+    path = root / variant / f"{chip_id}.npz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        prediction=np.asarray(prediction, dtype=np.uint8),
+        target=np.asarray(target),
+    )
 
 
 def _summary(burn: BinaryAccumulator, severity: SeverityAccumulator) -> dict[str, object]:
@@ -222,9 +245,11 @@ def crossfit_bs_candidate_ensemble(
     threshold_candidates: int = 64,
     threshold_passes: int = 2,
     landcover_passes: int = 2,
+    prediction_output: str | Path | None = None,
 ) -> dict[str, object]:
     candidates = _load_candidates(candidate_root)
     assignment = _assignment(fold_manifest)
+    prediction_root = Path(prediction_output) if prediction_output is not None else None
 
     bs_ids = sorted(candidates["BASE"])
     missing_assignment = sorted(set(bs_ids) - set(assignment))
@@ -301,6 +326,24 @@ def crossfit_bs_candidate_ensemble(
             fold_baseline_burn,
             fold_baseline_severity,
         )
+
+        if prediction_root is not None:
+            for chip_id in holdout:
+                record = candidates["BASE"][chip_id]
+                _save_prediction(
+                    prediction_root,
+                    "ensemble",
+                    chip_id,
+                    _prediction(chip_id, candidates, ensemble_config),
+                    np.asarray(record.target),
+                )
+                _save_prediction(
+                    prediction_root,
+                    "baseline",
+                    chip_id,
+                    _prediction(chip_id, candidates, baseline_config),
+                    np.asarray(record.target),
+                )
 
         ensemble_summary = _summary(fold_ensemble_burn, fold_ensemble_severity)
         baseline_summary = _summary(fold_baseline_burn, fold_baseline_severity)
