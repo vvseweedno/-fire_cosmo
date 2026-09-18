@@ -9,11 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from wildfire.features import (
-    active_fire_physics_features,
-    local_mean_3x3,
-    robust_z,
-)
+from wildfire.features import active_fire_physics_features, local_mean_3x3, robust_z
 from wildfire.model_config import ModelConfig
 
 
