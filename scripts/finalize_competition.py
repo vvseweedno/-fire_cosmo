@@ -1,18 +1,23 @@
-"""One-command final competition gate for the official AF/BS task.
+"""One-command final competition pipeline for the official AF/BS task.
 
-The gate executes the requested release protocol without private-test lookup:
+This script executes the deterministic competition pipeline and freezes artifacts.
+It deliberately does *not* label the release PROVEN by itself.  The authoritative
+engineering proof status is produced by scripts/verify_proven_release.py only
+after CI and bootstrap evidence are attached.
+
+Pipeline:
 1. deep train/test input preflight;
 2. deterministic organiser-group folds with an explicit leakage audit;
-3. cross-fitted F1_AF / IoU_burn / mIoU_severity;
-4. BASE-anchored SAR/spectral/land-cover candidate ensemble;
-5. promotion only after positive fold-wise cross-fitted Score delta;
-6. full OOF -> deployment -> test inference path;
+3. baseline cross-fitted F1_AF / IoU_burn / mIoU_severity;
+4. independently cross-fitted AF and BS candidate ensembles;
+5. promotion only after non-trivial fold-wise gain;
+6. pooled OOF deployment fitting only after promotion;
 7. two independent deterministic reproductions;
 8. strict template/RLE submission validation twice;
-9. frozen model/submission/fold hashes in a release manifest.
+9. frozen model/submission/fold hashes plus release-evidence skeleton.
 """
 
-from __future__ import annotations  # noqa: I001
+from __future__ import annotations
 
 import argparse
 import hashlib
@@ -23,17 +28,23 @@ from dataclasses import asdict
 from pathlib import Path
 
 from inference import run as run_inference
+from scripts.generate_af_candidate_oof import run as generate_af_candidate_oof
 from scripts.generate_baseline_oof import run as generate_baseline_oof
 from scripts.generate_bs_candidate_oof import run as generate_bs_candidate_oof
+from scripts.optimize_af_candidate_ensemble import (
+    run as optimize_af_candidate_ensemble,
+)
 from scripts.optimize_bs_candidate_ensemble import (
     run as optimize_bs_candidate_ensemble,
 )
 from scripts.preflight_dataset import run as preflight
+from wildfire.af_ensemble_validation import crossfit_af_candidate_ensemble
 from wildfire.bs_ensemble_validation import crossfit_bs_candidate_ensemble
 from wildfire.crossfit import crossfit_calibrate_and_evaluate
 from wildfire.metadata import read_meta_csv
 from wildfire.model_config import load_model_config, save_model_config
 from wildfire.oof import load_oof_directory
+from wildfire.release_gate import official_score
 from wildfire.split import build_group_folds, write_split_manifest
 from wildfire.submission import (
     read_submission_template,
@@ -75,6 +86,7 @@ def _validate_submission(data_dir: Path, submission: Path) -> dict[str, object]:
     if errors:
         raise RuntimeError("invalid submission: " + "; ".join(errors[:10]))
     return {
+        "valid": True,
         "rows": len(template),
         "sha256": _sha256(submission),
         "errors": [],
@@ -83,43 +95,45 @@ def _validate_submission(data_dir: Path, submission: Path) -> dict[str, object]:
 
 def _selected_metrics(
     baseline_crossfit: dict[str, object],
-    candidate_crossfit: dict[str, object],
-) -> tuple[bool, dict[str, float]]:
-    base = baseline_crossfit["crossfit"]
+    af_candidate_crossfit: dict[str, object],
+    bs_candidate_crossfit: dict[str, object],
+) -> tuple[dict[str, bool], dict[str, float]]:
+    base = baseline_crossfit.get("crossfit")
     if not isinstance(base, dict):
         raise RuntimeError("baseline crossfit report has no summary")
-    f1 = base.get("f1_af")
-    if f1 is None:
-        raise RuntimeError("baseline crossfit F1_AF is unavailable")
 
-    promoted = bool(candidate_crossfit.get("promotion_allowed"))
-    if promoted:
-        ensemble = candidate_crossfit.get("ensemble")
-        if not isinstance(ensemble, dict):
-            raise RuntimeError("candidate report has no ensemble summary")
-        iou = ensemble.get("iou_burn")
-        miou = ensemble.get("miou_severity")
-        if iou is None or miou is None:
-            raise RuntimeError("candidate BS metrics are unavailable")
-        metrics = {
-            "f1_af": float(f1),
-            "iou_burn": float(iou),
-            "miou_severity": float(miou),
-        }
-        metrics["score"] = (
-            0.35 * metrics["f1_af"]
-            + 0.35 * metrics["iou_burn"]
-            + 0.30 * metrics["miou_severity"]
-        )
-        return True, metrics
-
-    result: dict[str, float] = {}
     for key in METRIC_KEYS:
-        value = base.get(key)
-        if value is None:
+        if base.get(key) is None:
             raise RuntimeError(f"baseline crossfit metric {key} is unavailable")
-        result[key] = float(value)
-    return False, result
+
+    af_promoted = bool(af_candidate_crossfit.get("promotion_allowed"))
+    bs_promoted = bool(bs_candidate_crossfit.get("promotion_allowed"))
+
+    f1 = float(base["f1_af"])
+    if af_promoted:
+        value = af_candidate_crossfit.get("ensemble_f1")
+        if value is None:
+            raise RuntimeError("promoted AF report has no ensemble_f1")
+        f1 = float(value)
+
+    iou = float(base["iou_burn"])
+    miou = float(base["miou_severity"])
+    if bs_promoted:
+        ensemble = bs_candidate_crossfit.get("ensemble")
+        if not isinstance(ensemble, dict):
+            raise RuntimeError("promoted BS report has no ensemble summary")
+        if ensemble.get("iou_burn") is None or ensemble.get("miou_severity") is None:
+            raise RuntimeError("promoted BS metrics are unavailable")
+        iou = float(ensemble["iou_burn"])
+        miou = float(ensemble["miou_severity"])
+
+    metrics = {
+        "f1_af": f1,
+        "iou_burn": iou,
+        "miou_severity": miou,
+    }
+    metrics["score"] = official_score(metrics)
+    return {"af": af_promoted, "bs": bs_promoted}, metrics
 
 
 def _fit_once(
@@ -128,6 +142,8 @@ def _fit_once(
     run_dir: Path,
     *,
     base_config_path: Path,
+    af_alpha_steps: int,
+    af_epsilon: float,
     bs_max_candidates: int,
     bs_passes: int,
     bs_landcover_passes: int,
@@ -164,18 +180,33 @@ def _fit_once(
     save_model_config(baseline_deployment, baseline_config_path)
     _write_json(run_dir / "baseline_crossfit.json", baseline_report)
 
-    candidate_root = run_dir / "oof_bs_candidates"
-    candidate_oof_summary = generate_bs_candidate_oof(
+    af_candidate_root = run_dir / "oof_af_candidates"
+    af_candidate_oof_summary = generate_af_candidate_oof(
         train_dir,
         fold_manifest,
-        candidate_root,
+        af_candidate_root,
+        model_config=base_config_path,
+    )
+    af_candidate_report = crossfit_af_candidate_ensemble(
+        af_candidate_root,
+        manifest,
+        alpha_steps=af_alpha_steps,
+        epsilon=af_epsilon,
+    )
+    _write_json(run_dir / "af_candidate_crossfit.json", af_candidate_report)
+
+    bs_candidate_root = run_dir / "oof_bs_candidates"
+    bs_candidate_oof_summary = generate_bs_candidate_oof(
+        train_dir,
+        fold_manifest,
+        bs_candidate_root,
         model_config=base_config_path,
     )
     # Cross-fitted candidate comparison must start from the frozen pre-OOF
     # baseline config. Passing pooled deployment thresholds here would leak
     # holdout-label information through optimizer initialization.
-    candidate_report = crossfit_bs_candidate_ensemble(
-        candidate_root,
+    bs_candidate_report = crossfit_bs_candidate_ensemble(
+        bs_candidate_root,
         manifest,
         base_config,
         alpha_steps=alpha_steps,
@@ -183,16 +214,21 @@ def _fit_once(
         threshold_passes=ensemble_threshold_passes,
         landcover_passes=bs_landcover_passes,
     )
-    _write_json(run_dir / "bs_candidate_crossfit.json", candidate_report)
+    _write_json(run_dir / "bs_candidate_crossfit.json", bs_candidate_report)
 
-    promoted, metrics = _selected_metrics(baseline_report, candidate_report)
-    final_config_path = run_dir / "deployment_config.json"
-    pooled_ensemble_report: dict[str, object] | None = None
-    if promoted:
-        pooled_ensemble_report = optimize_bs_candidate_ensemble(
-            candidate_root,
+    promotions, metrics = _selected_metrics(
+        baseline_report,
+        af_candidate_report,
+        bs_candidate_report,
+    )
+
+    bs_config_path = run_dir / "bs_deployment_config.json"
+    pooled_bs_report: dict[str, object] | None = None
+    if promotions["bs"]:
+        pooled_bs_report = optimize_bs_candidate_ensemble(
+            bs_candidate_root,
             base_config_path=baseline_config_path,
-            output_config=final_config_path,
+            output_config=bs_config_path,
             output_report=run_dir / "bs_ensemble_pooled.json",
             alpha_steps=max(alpha_steps, 16),
             threshold_candidates=max(ensemble_threshold_candidates, 96),
@@ -200,18 +236,41 @@ def _fit_once(
             landcover_passes=bs_landcover_passes,
         )
     else:
-        shutil.copyfile(baseline_config_path, final_config_path)
+        shutil.copyfile(baseline_config_path, bs_config_path)
+
+    final_config_path = run_dir / "deployment_config.json"
+    pooled_af_report: dict[str, object] | None = None
+    if promotions["af"]:
+        pooled_af_report = optimize_af_candidate_ensemble(
+            af_candidate_root,
+            base_config_path=bs_config_path,
+            output_config=final_config_path,
+            output_report=run_dir / "af_ensemble_pooled.json",
+            alpha_steps=max(af_alpha_steps, 24),
+        )
+    else:
+        shutil.copyfile(bs_config_path, final_config_path)
+
+    base_summary = baseline_report["crossfit"]
+    if not isinstance(base_summary, dict):
+        raise RuntimeError("baseline crossfit summary is missing")
+    delta_score = float(metrics["score"]) - float(base_summary["score"])
 
     return {
-        "promoted": promoted,
+        "promotions": promotions,
         "metrics": metrics,
+        "baseline_metrics": {key: float(base_summary[key]) for key in METRIC_KEYS},
+        "delta_score": delta_score,
         "deployment_config": str(final_config_path),
         "deployment_signature": _deployment_signature(final_config_path),
         "baseline_oof": baseline_oof_summary,
-        "candidate_oof": candidate_oof_summary,
+        "af_candidate_oof": af_candidate_oof_summary,
+        "bs_candidate_oof": bs_candidate_oof_summary,
         "baseline_crossfit": baseline_report,
-        "candidate_crossfit": candidate_report,
-        "pooled_ensemble": pooled_ensemble_report,
+        "af_candidate_crossfit": af_candidate_report,
+        "bs_candidate_crossfit": bs_candidate_report,
+        "pooled_af_ensemble": pooled_af_report,
+        "pooled_bs_ensemble": pooled_bs_report,
     }
 
 
@@ -221,7 +280,7 @@ def _assert_reproducible(
     *,
     tolerance: float,
 ) -> dict[str, float]:
-    if bool(first["promoted"]) != bool(second["promoted"]):
+    if first["promotions"] != second["promotions"]:
         raise RuntimeError("repeated fitting disagreed on ensemble promotion")
     if first["deployment_signature"] != second["deployment_signature"]:
         raise RuntimeError("repeated fitting produced different deployable parameters")
@@ -238,7 +297,7 @@ def _assert_reproducible(
         if delta > tolerance:
             raise RuntimeError(
                 f"reproducibility failed for {key}: "
-                f"delta={delta:.8f} > {tolerance:.8f}"
+                f"delta={delta:.12f} > {tolerance:.12f}"
             )
     return deltas
 
@@ -251,7 +310,9 @@ def run(
     folds: int = 5,
     seed: int = 42,
     allow_chip_fallback: bool = False,
-    tolerance: float = 0.005,
+    tolerance: float = 1e-8,
+    score_epsilon: float = 1e-4,
+    af_alpha_steps: int = 20,
     bs_max_candidates: int = 128,
     bs_passes: int = 4,
     bs_landcover_passes: int = 2,
@@ -287,6 +348,8 @@ def run(
         fold_manifest,
         root / "repro_run_1",
         base_config_path=base_config_path,
+        af_alpha_steps=af_alpha_steps,
+        af_epsilon=score_epsilon / 0.35,
         bs_max_candidates=bs_max_candidates,
         bs_passes=bs_passes,
         bs_landcover_passes=bs_landcover_passes,
@@ -299,6 +362,8 @@ def run(
         fold_manifest,
         root / "repro_run_2",
         base_config_path=base_config_path,
+        af_alpha_steps=af_alpha_steps,
+        af_epsilon=score_epsilon / 0.35,
         bs_max_candidates=bs_max_candidates,
         bs_passes=bs_passes,
         bs_landcover_passes=bs_landcover_passes,
@@ -307,6 +372,12 @@ def run(
         ensemble_threshold_passes=ensemble_threshold_passes,
     )
     metric_deltas = _assert_reproducible(first, second, tolerance=tolerance)
+
+    if float(first["delta_score"]) <= score_epsilon:
+        raise RuntimeError(
+            "technical proof gate failed: final cross-fitted Score did not beat "
+            f"baseline by epsilon={score_epsilon:g}; delta={first['delta_score']}"
+        )
 
     final_config = root / "artifacts" / "final_model_config.json"
     final_config.parent.mkdir(parents=True, exist_ok=True)
@@ -336,13 +407,14 @@ def run(
     shutil.copyfile(Path(str(inference_runs[0]["path"])), final_submission)
 
     freeze = {
-        "status": "frozen",
+        "status": "frozen_candidate",
+        "proof_status": "PENDING_CI_AND_BOOTSTRAP",
         "validation": "cross_fitted_oof",
-        "promoted_bs_candidate_ensemble": bool(first["promoted"]),
-        "crossfit_metrics": first["metrics"],
-        "candidate_delta_total_score": first["candidate_crossfit"].get(
-            "delta_total_score"
-        ),
+        "promotions": first["promotions"],
+        "baseline_crossfit_metrics": first["baseline_metrics"],
+        "final_crossfit_metrics": first["metrics"],
+        "delta_score_vs_baseline": first["delta_score"],
+        "score_epsilon": score_epsilon,
         "reproducibility": {
             "tolerance": tolerance,
             "metric_deltas": metric_deltas,
@@ -367,16 +439,47 @@ def run(
     freeze_path = root / "artifacts" / "freeze_manifest.json"
     _write_json(freeze_path, freeze)
 
+    evidence = {
+        "ci": {
+            "green": False,
+            "note": "Set from the actual GitHub Actions result before PROVEN verification.",
+        },
+        "preflight": {
+            "train": train_preflight,
+            "test": test_preflight,
+        },
+        "crossfit": {
+            "baseline": first["baseline_metrics"],
+            "final": first["metrics"],
+        },
+        "bootstrap": None,
+        "reproducibility": {
+            "run_1": first["metrics"],
+            "run_2": second["metrics"],
+            "deployment_signature_equal": (
+                first["deployment_signature"] == second["deployment_signature"]
+            ),
+        },
+        "submission": {
+            "run_1": inference_runs[0],
+            "run_2": inference_runs[1],
+        },
+    }
+    evidence_path = root / "artifacts" / "release_evidence.json"
+    _write_json(evidence_path, evidence)
+
     return {
-        "ok": True,
-        "promoted_bs_candidate_ensemble": bool(first["promoted"]),
+        "pipeline_ok": True,
+        "proven": False,
+        "proof_status": "PENDING_CI_AND_BOOTSTRAP",
+        "promotions": first["promotions"],
+        "baseline_metrics": first["baseline_metrics"],
         "metrics": first["metrics"],
-        "candidate_delta_total_score": first["candidate_crossfit"].get(
-            "delta_total_score"
-        ),
+        "delta_score_vs_baseline": first["delta_score"],
         "submission": str(final_submission),
         "final_model_config": str(final_config),
         "freeze_manifest": str(freeze_path),
+        "release_evidence": str(evidence_path),
         "reproducibility": freeze["reproducibility"],
         "leakage_audit": freeze["leakage_audit"],
         "inference_runs": inference_runs,
@@ -398,7 +501,9 @@ def main() -> None:
             "because it weakens the leakage-safety guarantee."
         ),
     )
-    parser.add_argument("--tolerance", type=float, default=0.005)
+    parser.add_argument("--tolerance", type=float, default=1e-8)
+    parser.add_argument("--score-epsilon", type=float, default=1e-4)
+    parser.add_argument("--af-alpha-steps", type=int, default=20)
     parser.add_argument("--bs-max-candidates", type=int, default=128)
     parser.add_argument("--bs-passes", type=int, default=4)
     parser.add_argument("--bs-landcover-passes", type=int, default=2)
@@ -415,6 +520,8 @@ def main() -> None:
         seed=args.seed,
         allow_chip_fallback=args.allow_chip_fallback,
         tolerance=args.tolerance,
+        score_epsilon=args.score_epsilon,
+        af_alpha_steps=args.af_alpha_steps,
         bs_max_candidates=args.bs_max_candidates,
         bs_passes=args.bs_passes,
         bs_landcover_passes=args.bs_landcover_passes,
