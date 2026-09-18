@@ -17,7 +17,7 @@ Pipeline:
 9. frozen model/submission/fold hashes plus release-evidence skeleton.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import argparse
 import hashlib
