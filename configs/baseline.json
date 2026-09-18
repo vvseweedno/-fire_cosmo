@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "af": {
     "threshold": 4.0,
     "z4_weight": 1.1,
@@ -17,7 +17,9 @@
     "forest_thresholds": [0.1, 0.27, 0.44],
     "sar_weight": 0.025,
     "cloud_sar_weight": 0.0,
-    "sar_clip": 3.0
+    "sar_clip": 3.0,
+    "score_recipe": "dnbr_sar",
+    "index_consensus_weight": 0.0
   },
   "training": {}
 }
