@@ -1,9 +1,5 @@
 """Small deterministic training utilities used before heavier ML models are justified."""
 
-from __future__ import annotations
-
-from dataclasses import replace
-
 import numpy as np
 
 from wildfire.evaluation import BinaryAccumulator
@@ -87,9 +83,20 @@ def calibrate_af_threshold(
         "best_f1_train": float(best["f1"]),
         "trace": trace,
     }
-    calibrated = replace(
-        base_config,
-        af=replace(base_config.af, threshold=best_threshold),
+    calibrated_af = type(base_config.af)(
+        threshold=best_threshold,
+        z4_weight=base_config.af.z4_weight,
+        z5_weight=base_config.af.z5_weight,
+        local_anomaly_weight=base_config.af.local_anomaly_weight,
+        i3_sunglint_penalty=base_config.af.i3_sunglint_penalty,
+        water_snow_penalty=base_config.af.water_snow_penalty,
+        built_penalty=base_config.af.built_penalty,
+        bare_penalty=base_config.af.bare_penalty,
+    )
+    calibrated = ModelConfig(
+        version=base_config.version,
+        af=calibrated_af,
+        bs=base_config.bs,
         training=training_metadata,
     )
     return calibrated, trace
