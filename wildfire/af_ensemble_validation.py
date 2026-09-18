@@ -118,26 +118,48 @@ def _fuse_chip(
     return fused
 
 
+def _prediction(
+    chip_id: str,
+    candidates: dict[str, dict[str, OOFRecord]],
+    fit: dict[str, object],
+) -> np.ndarray:
+    raw_weights = fit["weights"]
+    if not isinstance(raw_weights, dict):
+        raise ValueError("ensemble fit is missing weights")
+    weights = {str(name): float(value) for name, value in raw_weights.items()}
+    threshold = float(fit["threshold"])
+    record = candidates["BASE"][chip_id]
+    valid = np.asarray(record.valid, dtype=bool)
+    score = _fuse_chip(chip_id, candidates, weights)
+    return ((score >= threshold) & valid).astype(np.uint8)
+
+
 def _evaluate(
     ids: list[str],
     candidates: dict[str, dict[str, OOFRecord]],
     fit: dict[str, object],
     accumulator: BinaryAccumulator,
 ) -> None:
-    raw_weights = fit["weights"]
-    if not isinstance(raw_weights, dict):
-        raise ValueError("ensemble fit is missing weights")
-    weights = {str(name): float(value) for name, value in raw_weights.items()}
-    threshold = float(fit["threshold"])
-
     for chip_id in ids:
         record = candidates["BASE"][chip_id]
-        valid = np.asarray(record.valid, dtype=bool)
-        score = _fuse_chip(chip_id, candidates, weights)
-        prediction = (score >= threshold) & valid
-        # Official AF F1 is all-pixel. Invalid-model pixels remain background and
-        # positive targets there are therefore false negatives.
+        prediction = _prediction(chip_id, candidates, fit)
         accumulator.update(prediction, np.asarray(record.target) > 0)
+
+
+def _save_prediction(
+    root: Path,
+    variant: str,
+    chip_id: str,
+    prediction: np.ndarray,
+    target: np.ndarray,
+) -> None:
+    path = root / variant / f"{chip_id}.npz"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        prediction=np.asarray(prediction, dtype=np.uint8),
+        target=np.asarray(target),
+    )
 
 
 def crossfit_af_candidate_ensemble(
@@ -146,9 +168,11 @@ def crossfit_af_candidate_ensemble(
     *,
     alpha_steps: int = 20,
     epsilon: float = 1e-4,
+    prediction_output: str | Path | None = None,
 ) -> dict[str, object]:
     candidates = _load_candidates(candidate_root)
     assignment = _assignment(fold_manifest)
+    prediction_root = Path(prediction_output) if prediction_output is not None else None
     af_ids = sorted(candidates["BASE"])
 
     missing_assignment = sorted(set(af_ids) - set(assignment))
@@ -188,6 +212,24 @@ def crossfit_af_candidate_ensemble(
         _evaluate(holdout, candidates, ensemble_fit, fold_ensemble)
         _evaluate(holdout, candidates, baseline_fit, baseline_acc)
         _evaluate(holdout, candidates, baseline_fit, fold_baseline)
+
+        if prediction_root is not None:
+            for chip_id in holdout:
+                record = candidates["BASE"][chip_id]
+                _save_prediction(
+                    prediction_root,
+                    "ensemble",
+                    chip_id,
+                    _prediction(chip_id, candidates, ensemble_fit),
+                    np.asarray(record.target),
+                )
+                _save_prediction(
+                    prediction_root,
+                    "baseline",
+                    chip_id,
+                    _prediction(chip_id, candidates, baseline_fit),
+                    np.asarray(record.target),
+                )
 
         fold_reports.append(
             {
