@@ -18,6 +18,8 @@ def _evidence() -> dict[str, object]:
         "ci": {"green": True},
         "preflight": {"train": {"ok": True}, "test": {"ok": True}},
         "leakage_audit": {
+            "status": "PASS",
+            "pass": True,
             "strict_event_grouping": True,
             "chip_fallbacks": 0,
             "event_group_coverage": 1.0,
@@ -84,6 +86,15 @@ def test_proven_release_rejects_chip_level_group_fallback():
     report = evaluate_proven_release(evidence)
     assert report["proven"] is False
     assert report["checks"]["strict_leakage_grouping"]["pass"] is False
+
+
+def test_proven_release_rejects_failed_explicit_leakage_audit():
+    evidence = _evidence()
+    evidence["leakage_audit"]["status"] = "FAIL"
+    evidence["leakage_audit"]["pass"] = False
+    report = evaluate_proven_release(evidence)
+    assert report["proven"] is False
+    assert report["checks"]["leakage_audit_pass"]["pass"] is False
 
 
 def test_proven_release_rejects_bootstrap_crossfit_score_mismatch():
