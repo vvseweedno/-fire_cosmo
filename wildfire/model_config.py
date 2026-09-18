@@ -29,11 +29,13 @@ class BSConfig:
     sar_weight: float = 0.025
     cloud_sar_weight: float = 0.0
     sar_clip: float = 3.0
+    score_recipe: str = "dnbr_sar"
+    index_consensus_weight: float = 0.0
 
 
 @dataclass(frozen=True)
 class ModelConfig:
-    version: int = 2
+    version: int = 3
     af: AFConfig = field(default_factory=AFConfig)
     bs: BSConfig = field(default_factory=BSConfig)
     training: dict[str, Any] = field(default_factory=dict)
@@ -46,6 +48,14 @@ def _triple(value: object, name: str) -> tuple[float, float, float]:
     if not result[0] < result[1] < result[2]:
         raise ValueError(f"{name} thresholds must be strictly increasing")
     return result  # type: ignore[return-value]
+
+
+def _score_recipe(value: object) -> str:
+    recipe = str(value or "dnbr_sar").strip().lower()
+    allowed = {"dnbr_sar", "spectral_consensus"}
+    if recipe not in allowed:
+        raise ValueError(f"unsupported BS score_recipe {recipe!r}; expected one of {sorted(allowed)}")
+    return recipe
 
 
 def model_config_from_dict(payload: dict[str, Any]) -> ModelConfig:
@@ -82,7 +92,14 @@ def model_config_from_dict(payload: dict[str, Any]) -> ModelConfig:
         sar_weight=float(bs_payload.get("sar_weight", 0.025)),
         cloud_sar_weight=float(bs_payload.get("cloud_sar_weight", 0.0)),
         sar_clip=float(bs_payload.get("sar_clip", 3.0)),
+        score_recipe=_score_recipe(bs_payload.get("score_recipe", "dnbr_sar")),
+        index_consensus_weight=float(bs_payload.get("index_consensus_weight", 0.0)),
     )
+    if bs.sar_clip <= 0:
+        raise ValueError("sar_clip must be positive")
+    if bs.index_consensus_weight < 0:
+        raise ValueError("index_consensus_weight must be non-negative")
+
     return ModelConfig(
         version=int(payload.get("version", 1)),
         af=af,
