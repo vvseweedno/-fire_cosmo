@@ -82,9 +82,10 @@ BS: Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
 12. scripts/validate_submission.py.
 13. Full-test latency benchmark.
 
-## Финальный one-command gate
+## Финальный release gate
 
-Для финальной сборки на official train/test используйте один воспроизводимый gate:
+Для финальной сборки на official train/test запускается один воспроизводимый
+pipeline:
 
 ```bash
 python scripts/finalize_competition.py \
@@ -93,22 +94,52 @@ python scripts/finalize_competition.py \
   --work-dir final_run
 ```
 
-Gate выполняет весь релизный протокол: deep preflight официальных train/test,
-фиксированные group folds, cross-fitted `F1_AF` / `IoU_burn` /
-`mIoU_severity`, BASE-anchored BS candidate ensemble (SAR, spectral indices,
-land-cover calibration), promotion только при положительном fold-wise
-cross-fitted delta, два независимых повторных fit-прогона, два inference-прогона,
-strict validation `submission.csv` и SHA256 freeze manifest.
+Он выполняет deep preflight официальных train/test, фиксированные organiser-group
+folds, cross-fitted `F1_AF` / `IoU_burn` / `mIoU_severity`, независимо
+проверяет BASE-anchored AF и BS ensembles, оставляет только измеренное улучшение,
+строит event-level paired bootstrap на fold-holdout predictions, дважды повторяет
+fit, дважды запускает inference, дважды валидирует submission и требует
+одинаковый SHA256 результата.
 
-По умолчанию финальный запуск требует organiser-provided event/group id для каждого
-train-chip. Это намеренно: fallback `chip_id` нельзя выдавать за строгую защиту от
-event leakage. Если официальный metadata действительно не содержит группировки,
-можно явно добавить `--allow-chip-fallback`; freeze manifest сохранит этот факт.
+Сам `finalize_competition.py` намеренно **не имеет права объявлять результат
+PROVEN**. После него должен существовать `final_run/artifacts/release_evidence.json`,
+а окончательный статус вычисляется отдельным verifier:
+
+```bash
+python scripts/verify_proven_release.py \
+  --evidence final_run/artifacts/release_evidence.json \
+  --output final_run/artifacts/final_validation.json
+```
+
+Инженерный контракт закрытия:
+
+```text
+CI = green
+AND official preflight = pass
+AND strict organiser event grouping = pass
+AND cross-fit metrics exist
+AND final Score > baseline Score + epsilon
+AND bootstrap/stability acceptable
+AND repro run 1 ~= repro run 2
+AND submission validator = pass
+AND submission run 1 SHA256 == submission run 2 SHA256
+```
+
+Только если **каждый** пункт истинен, `final_validation.json` получает
+`"status": "PASS"` и `"proven": true`. В противном случае статус — FAIL.
+
+По умолчанию final pipeline требует organiser-provided event/group id для каждого
+train-chip. Опция `--allow-chip-fallback` оставлена только как диагностический
+режим: она может позволить сделать рабочий run, но strict release verifier
+запрещает статус PROVEN при `chip_fallbacks > 0`.
 
 Финальные артефакты:
 - `final_run/artifacts/final_model_config.json`;
 - `final_run/submission.csv`;
-- `final_run/artifacts/freeze_manifest.json`.
+- `final_run/bootstrap_final_vs_baseline.json`;
+- `final_run/artifacts/freeze_manifest.json`;
+- `final_run/artifacts/release_evidence.json`;
+- `final_run/artifacts/final_validation.json`.
 
 ## Metric-max workflow на official train
 
