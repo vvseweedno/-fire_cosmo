@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from wildfire.aoi import load_monitoring_aoi, monitoring_aoi_summary
+from wildfire.operational import operational_capabilities
 
 app = FastAPI(
     title="Wildfire Monitoring — КосмоХакатон 2026",
@@ -79,6 +80,20 @@ def spec() -> dict:
     }
 
 
+@app.get("/api/models")
+def models() -> dict[str, object]:
+    """Expose only real adapter capabilities; no fabricated accuracy metrics."""
+
+    return {
+        "service_version": app.version,
+        "capabilities": operational_capabilities(),
+        "accuracy": {
+            "status": "UNVERIFIED_ON_ORGANIZER_LABELS",
+            "metrics": None,
+        },
+    }
+
+
 @app.get("/api/aoi")
 def aoi() -> dict[str, object]:
     """Expose only explicitly configured organizer/public AOI metadata."""
@@ -143,5 +158,5 @@ strong{color:#58a6ff}.ok{color:#3fb950}.warn{color:#d29922}
 вычислить площадь пикселя.</p>
 <p class="warn">Private-test координаты, даты и скрытые границы не реконструируются.</p>
 </div>
-<p class="muted">API: /health · /api/spec · /api/aoi</p>
+<p class="muted">API: /health · /api/spec · /api/models · /api/aoi</p>
 </main></body></html>"""
