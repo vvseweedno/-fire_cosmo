@@ -15,7 +15,12 @@ def _evidence() -> dict[str, object]:
     baseline = _metrics(0.70, 0.60, 0.50)
     final = _metrics(0.72, 0.62, 0.52)
     return {
-        "ci": {"green": True},
+        "ci": {
+            "source_commit_sha": "a" * 40,
+            "workflow_sha": "a" * 40,
+            "workflow_conclusion": "success",
+            "workflow_run_id": 12345,
+        },
         "preflight": {"train": {"ok": True}, "test": {"ok": True}},
         "leakage_audit": {
             "status": "PASS",
@@ -103,3 +108,27 @@ def test_proven_release_rejects_bootstrap_crossfit_score_mismatch():
     report = evaluate_proven_release(evidence)
     assert report["proven"] is False
     assert report["checks"]["bootstrap_stability"]["pass"] is False
+
+
+def test_proven_release_rejects_manual_green_without_ci_binding():
+    evidence = _evidence()
+    evidence["ci"] = {"green": True}
+    report = evaluate_proven_release(evidence)
+    assert report["proven"] is False
+    assert report["checks"]["ci_exact_source_success"]["pass"] is False
+
+
+def test_proven_release_rejects_ci_from_different_commit():
+    evidence = _evidence()
+    evidence["ci"]["workflow_sha"] = "b" * 40
+    report = evaluate_proven_release(evidence)
+    assert report["proven"] is False
+    assert report["checks"]["ci_exact_source_success"]["pass"] is False
+
+
+def test_proven_release_rejects_non_successful_ci_conclusion():
+    evidence = _evidence()
+    evidence["ci"]["workflow_conclusion"] = "failure"
+    report = evaluate_proven_release(evidence)
+    assert report["proven"] is False
+    assert report["checks"]["ci_exact_source_success"]["pass"] is False
