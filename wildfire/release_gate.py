@@ -127,20 +127,41 @@ def evaluate_proven_release(
             used = int(bootstrap.get("n_boot_used", 0))
             ci95 = bootstrap.get("bootstrap_95_ci")
             probability = float(bootstrap.get("probability_delta_positive"))
+            score_a = float(bootstrap.get("score_a"))
+            score_b = float(bootstrap.get("score_b"))
+            bootstrap_delta = float(bootstrap.get("delta_score"))
             if not isinstance(ci95, (list, tuple)) or len(ci95) != 2:
                 raise ValueError("bootstrap_95_ci must contain two values")
             lo = float(ci95[0])
             hi = float(ci95[1])
+
+            metric_consistency = False
+            if (
+                base_ok
+                and final_ok
+                and isinstance(baseline, dict)
+                and isinstance(final, dict)
+            ):
+                expected_final = official_score(final)
+                expected_baseline = official_score(baseline)
+                expected_delta = expected_final - expected_baseline
+                metric_consistency = (
+                    abs(score_a - expected_final) <= score_tolerance
+                    and abs(score_b - expected_baseline) <= score_tolerance
+                    and abs(bootstrap_delta - expected_delta) <= score_tolerance
+                )
+
             bootstrap_ok = (
                 used >= min_bootstrap_replicates
                 and math.isfinite(lo)
                 and math.isfinite(hi)
                 and lo > 0.0
                 and probability >= min_probability_positive
+                and metric_consistency
             )
             bootstrap_detail = (
                 f"n={used}, ci95=[{lo:.12f}, {hi:.12f}], "
-                f"P(delta>0)={probability:.6f}"
+                f"P(delta>0)={probability:.6f}, metric_consistency={metric_consistency}"
             )
         except (TypeError, ValueError) as exc:
             bootstrap_detail = f"invalid bootstrap evidence: {exc}"
@@ -215,6 +236,7 @@ def evaluate_proven_release(
             "min_bootstrap_replicates": min_bootstrap_replicates,
             "min_probability_positive": min_probability_positive,
             "bootstrap_ci_lower_must_be_positive": True,
+            "bootstrap_scores_must_match_crossfit": True,
         },
         "delta_score": delta_score,
         "checks": checks,
