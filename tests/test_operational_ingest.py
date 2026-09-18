@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -23,7 +23,7 @@ def _obs(
     return ObservationDescriptor(
         observation_id=observation_id,
         sensor_family=sensor,
-        acquired_at=acquired_at or datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc),
+        acquired_at=acquired_at or datetime(2026, 7, 1, 10, 0, tzinfo=UTC),
         crs=crs,
         bbox=bbox,
         channels=channels,
@@ -90,13 +90,13 @@ def test_build_burn_pair_requires_ordered_coregistered_sentinel2():
         observation_id="pre",
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
-        acquired_at=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        acquired_at=datetime(2026, 6, 1, 9, 0, tzinfo=UTC),
     )
     post = _obs(
         observation_id="post",
         sensor="S2",
         channels=("B8A", "B12"),
-        acquired_at=datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc),
+        acquired_at=datetime(2026, 7, 1, 9, 0, tzinfo=UTC),
     )
 
     pair = build_burn_pair(pre, post)
@@ -109,12 +109,12 @@ def test_build_burn_pair_rejects_reversed_time():
     pre = _obs(
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
-        acquired_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        acquired_at=datetime(2026, 8, 1, tzinfo=UTC),
     )
     post = _obs(
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
-        acquired_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        acquired_at=datetime(2026, 7, 1, tzinfo=UTC),
     )
 
     with pytest.raises(ValueError, match="earlier"):
@@ -125,12 +125,12 @@ def test_build_burn_pair_rejects_non_coregistered_bbox():
     pre = _obs(
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
-        acquired_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        acquired_at=datetime(2026, 6, 1, tzinfo=UTC),
     )
     post = _obs(
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
-        acquired_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        acquired_at=datetime(2026, 7, 1, tzinfo=UTC),
         bbox=(38.1, 45.0, 39.1, 46.0),
     )
 
