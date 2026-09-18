@@ -12,7 +12,7 @@ The gate executes the requested release protocol without private-test lookup:
 9. frozen model/submission/fold hashes in a release manifest.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import argparse
 import hashlib
