@@ -2,101 +2,112 @@
 
 Чистый competition-first прототип для кейса **«Мониторинг природных пожаров»**.
 
-Эта ветка намеренно собрана заново. Старый FIRMS-first проект, прогноз распространения,
-Rothermel/CA/Bayesian-модули, синтетическая «real validation» и захардкоженные отчёты сюда
-не перенесены.
+Ветка собрана заново под фактическое конкурсное задание. Старый FIRMS-first проект,
+прогноз распространения, Rothermel/CA/Bayesian-модули, синтетическая «real validation»
+и захардкоженные отчёты сюда не перенесены.
 
-## Что решаем
+## Конкурсное ядро
 
-### AF — Active Fire
-Вход: многоканальный VIIRS-чип (I1..I5) + контекстные слои.
-Выход: бинарная pixel-wise маска природного активного горения.
+**AF — Active Fire:** VIIRS I1..I5 + контекст → бинарная pixel-wise mask природного
+активного горения.
 
-### BS — Burn Severity
-Вход: Sentinel-2 pre/post, Sentinel-1 pre/post, SCL, DEM/рельеф и land cover.
-Выход: классы 0/1/2/3 = no burn / low / moderate / high severity.
+**BS — Burn Severity:** Sentinel-2 pre/post + Sentinel-1 + SCL + terrain + land cover →
+классы 0/1/2/3 = no burn / low / moderate / high.
 
-Основной конкурсный score:
+Официальная композиция:
 
 ```
-0.35 * F1_AF + 0.35 * IoU_burn + 0.30 * mIoU_severity
+Score = 0.35 * F1_AF + 0.35 * IoU_burn + 0.30 * mIoU_severity
 ```
 
-## Что уже готово до выдачи датасета
+Evaluator использует micro-aggregation по общему пулу пикселей. Для severity-класса,
+отсутствующего одновременно в GT и prediction, IoU = 1 согласно постановке.
 
-- robust channel discovery для `.npy`, `.npz`, GeoTIFF;
-- быстрый domain baseline для AF;
-- быстрый domain baseline для BS с B8A/B12, dNBR, SCL и land-cover thresholds;
-- dataset-level pixel F1 / burn IoU / severity mIoU / composite score;
-- streaming evaluator с per-chip метриками и latency;
-- dataset profiler с channel presence/shapes/dtypes/ranges/class counts;
-- RLE row-major, 1-based;
-- генерация submission с обязательными class rows;
-- строгий validator submission;
-- dataset inspector;
-- unit tests;
+## Что уже готово
+
+- tolerant discovery отдельных `.npy`, `.npz`, GeoTIFF channel files;
+- raw layout probe для неизвестных/stacked файлов;
+- полный набор официальных channel aliases, включая S2 B5/B6/B7 и AF context;
+- deterministic AF baseline;
+- dNBR/SCL/land-cover-aware BS baseline;
+- versioned JSON model config;
+- dataset profiler;
+- official metric evaluator + per-chip metrics + latency;
+- deterministic group-aware split по `fire_event_id`;
+- настоящий `train.py` для AF threshold calibration только на train partition;
+- strict RLE: row-major, 1-based, no overlap/touching runs;
+- template-driven submission по `sample_submission.csv`;
+- strict submission validator;
+- обязательный `inference.py`;
 - FastAPI demo layer;
-- CI: ruff + compile + pytest + API smoke + Docker build;
-- воспроизводимый CLI.
+- Docker;
+- CI: Ruff + compile + pytest + API smoke + Docker build.
 
-## Быстрый старт
+## Рабочий цикл после получения официального train
 
 ```bash
 python -m pip install -e ".[dev]"
-pytest -q
 
-# 1. Сначала понять фактический layout выданных данных.
-python scripts/inspect_dataset.py --data-dir /path/to/train
+# 1. Ничего не угадываем — сначала видим реальный layout.
+python scripts/inspect_dataset.py \
+  --data-dir /path/to/train \
+  --output outputs/layout.json
 
-# 2. Получить компактный EDA-профиль и class balance.
+# 2. После адаптации reader под фактический layout — EDA/profile.
 python scripts/profile_dataset.py \
   --data-dir /path/to/train \
   --output outputs/dataset_profile.json
 
-# 3. Посчитать реальный baseline на размеченных train/validation chips.
-python scripts/evaluate_baseline.py \
-  --data-dir /path/to/validation \
-  --output outputs/baseline_metrics.json
+# 3. Один раз фиксируем split. fire_event_id не пересекает train/validation.
+python scripts/make_split.py \
+  --meta /path/to/train/meta.csv \
+  --output splits/seed42.json \
+  --validation-fraction 0.2 \
+  --seed 42
 
-# 4. Финальный competition inference.
+# 4. Обучаем/калибруем только на train partition.
+python train.py \
+  --data-dir /path/to/train \
+  --split-manifest splits/seed42.json \
+  --output artifacts/baseline_config.json
+
+# 5. Честно оцениваем untouched validation.
+python scripts/evaluate_baseline.py \
+  --data-dir /path/to/train \
+  --split-manifest splits/seed42.json \
+  --partition validation \
+  --model-config artifacts/baseline_config.json \
+  --output outputs/baseline_validation.json
+
+# 6. Финальный inference. sample_submission.csv и meta.csv — источник истины.
 python inference.py \
   --data-dir /path/to/test \
+  --model-config artifacts/baseline_config.json \
   --output submission.csv
 
-# 5. Структурная проверка submission/RLE перед сдачей.
+# 7. Перед сдачей обязательно.
 python scripts/validate_submission.py \
   --submission submission.csv \
   --data-dir /path/to/test
 ```
 
-## Принцип оценки
+## Правила честной разработки
 
-Мы не называем synthetic fixtures «реальной валидацией».
-`evaluate_baseline.py` считает метрики только по фактически найденным `TARGET`-маскам и
-сохраняет агрегированные confusion counts, class-wise IoU, per-chip ошибки и latency.
+Synthetic fixtures не называются real validation. Private/public test не участвует в
+обучении, threshold tuning или ручной разметке. Test location/date не восстанавливаются.
+FIRMS и готовые fire/burned-area products не используются для получения test answers.
 
-Если в официальном датасете target/channel names отличаются, сначала обновляется reader
-под фактическую схему, и только после этого фиксируется baseline.
+Облачность не удаляется из официальной оценки. `VALID_MASK` в evaluator доступен только
+как явно включаемая исследовательская ablation; официальный baseline считает все target
+pixels.
 
-## Важное ограничение
+Точный layout официального архива пока не зашит в код. Если файлы окажутся stacked,
+`inspect_dataset.py` покажет shape/dtype/NPZ keys, после чего `wildfire/io.py`
+адаптируется под фактический формат с regression fixture.
 
-До получения реальных файлов мы не притворяемся, что знаем точную структуру каталога.
-Reader сделан tolerant к распространённым именам каналов. После появления официального
-датасета первым шагом должен быть запуск `inspect_dataset.py`, после чего aliases/layout
-фиксируются под фактический формат.
+## Приоритеты
 
-Competition inference не должен использовать FIRMS, готовые fire/burned-area products,
-восстановление координат/дат test chips или поиск исходных сцен private test.
-
-## Стратегия после получения данных
-
-1. Зафиксировать фактический layout и официальный target format.
-2. Построить dataset profile и проверить class imbalance / invalid pixels.
-3. Зафиксировать train/validation split без leakage.
-4. Посчитать B0 baseline и сохранить JSON с метриками и latency.
-5. Делать EDA FP/FN и severity confusion.
-6. Улучшать только через измеримые ablations на неизменном split.
-7. ML-модели добавлять поверх текущего интерфейса, не ломая `inference.py` и submission.
-8. Сервис — демонстрационный слой; competition inference остаётся отдельным и быстрым.
+Сначала: корректный loader → B0 Score → EDA ошибок → измеримые ablations → компактная
+segmentation model. Только после роста F1/IoU/mIoU усиливается сервисный слой.
 
 См. `docs/TASK_ALIGNMENT.md` и `docs/EXPERIMENTS.md`.

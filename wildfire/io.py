@@ -14,34 +14,56 @@ except ImportError:  # pragma: no cover
 
 
 ALIASES: dict[str, tuple[str, ...]] = {
+    # VIIRS AF channels from the case statement.
     "I1": ("i1", "viirs_i1"),
     "I2": ("i2", "viirs_i2"),
     "I3": ("i3", "viirs_i3"),
     "I4": ("i4", "viirs_i4"),
     "I5": ("i5", "viirs_i5"),
+    # Sentinel-2 pre-fire optical stack.
     "B2_PRE": ("b2_pre", "pre_b2"),
     "B3_PRE": ("b3_pre", "pre_b3"),
     "B4_PRE": ("b4_pre", "pre_b4"),
+    "B5_PRE": ("b5_pre", "pre_b5"),
+    "B6_PRE": ("b6_pre", "pre_b6"),
+    "B7_PRE": ("b7_pre", "pre_b7"),
     "B8A_PRE": ("b8a_pre", "pre_b8a"),
     "B11_PRE": ("b11_pre", "pre_b11"),
     "B12_PRE": ("b12_pre", "pre_b12"),
     "SCL_PRE": ("scl_pre", "pre_scl"),
+    # Sentinel-2 post-fire optical stack.
     "B2_POST": ("b2_post", "post_b2"),
     "B3_POST": ("b3_post", "post_b3"),
     "B4_POST": ("b4_post", "post_b4"),
+    "B5_POST": ("b5_post", "post_b5"),
+    "B6_POST": ("b6_post", "post_b6"),
+    "B7_POST": ("b7_post", "post_b7"),
     "B8A_POST": ("b8a_post", "post_b8a"),
     "B11_POST": ("b11_post", "post_b11"),
     "B12_POST": ("b12_post", "post_b12"),
     "SCL_POST": ("scl_post", "post_scl"),
+    # Sentinel-1 pre/post.
     "VV_PRE": ("vv_pre", "pre_vv"),
     "VH_PRE": ("vh_pre", "pre_vh"),
     "VV_POST": ("vv_post", "post_vv"),
     "VH_POST": ("vh_post", "post_vh"),
+    # Shared context.
     "LANDCOVER": ("landcover", "worldcover", "land_cover", "lc"),
     "DEM": ("dem", "elevation"),
     "SLOPE": ("slope",),
     "ASPECT": ("aspect",),
     "VALID_MASK": ("valid_mask", "valid", "mask_valid"),
+    # AF observation geometry and ERA5-Land context. These are accepted by the
+    # reader even though the deterministic B0 baseline does not yet consume all.
+    "SUN_ZENITH": ("sun_zenith", "solar_zenith", "sza"),
+    "SUN_AZIMUTH": ("sun_azimuth", "solar_azimuth", "saa"),
+    "SENSOR_ZENITH": ("sensor_zenith", "view_zenith", "vza"),
+    "SENSOR_AZIMUTH": ("sensor_azimuth", "view_azimuth", "vaa"),
+    "AIR_TEMPERATURE": ("air_temperature", "temperature_2m", "t2m", "era5_t2m"),
+    "RELATIVE_HUMIDITY": ("relative_humidity", "humidity", "rh"),
+    "WIND_U10": ("wind_u10", "u10"),
+    "WIND_V10": ("wind_v10", "v10"),
+    "WIND_SPEED": ("wind_speed",),
     "TARGET": ("target", "label", "mask", "y"),
 }
 
@@ -70,7 +92,7 @@ def _canonical_name(path: Path) -> str | None:
 
 
 def discover_chips(data_dir: str | Path) -> list[Chip]:
-    """Treat each directory containing recognised channels as a chip."""
+    """Treat each directory containing recognised channel files as a chip."""
     root = Path(data_dir)
     if not root.exists():
         raise FileNotFoundError(root)

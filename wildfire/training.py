@@ -23,10 +23,10 @@ def calibrate_af_threshold(
     thresholds: list[float],
     base_config,
 ):
-    """Maximise micro-F1 on the supplied training partition.
+    """Maximise official micro-F1 on the supplied training partition.
 
-    Ties prefer a threshold closest to the baseline default and then the higher
-    threshold, which is conservative under the extreme AF class imbalance.
+    The model-side valid mask constrains predictions, but it never removes GT
+    pixels from scoring: official AF evaluation pools all pixels.
     """
     candidates = [float(value) for value in thresholds]
     if not candidates:
@@ -44,7 +44,7 @@ def calibrate_af_threshold(
 
         for value in candidates:
             pred = (score_array >= value) & valid_array
-            truth = target_array & valid_array
+            truth = target_array
             counts[value]["tp"] += int(np.count_nonzero(pred & truth))
             counts[value]["fp"] += int(np.count_nonzero(pred & ~truth))
             counts[value]["fn"] += int(np.count_nonzero(~pred & truth))
