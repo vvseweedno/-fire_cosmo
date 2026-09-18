@@ -5,7 +5,7 @@ are label-free VIIRS physics/context features.  The OOF optimizer may select
 them only when they improve cross-fitted AF F1; BASE always remains available.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import numpy as np
 
