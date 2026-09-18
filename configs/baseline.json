@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "af": {
     "threshold": 4,
     "z4_weight": 1.1,
@@ -8,7 +8,10 @@
     "i3_sunglint_penalty": 0.1,
     "water_snow_penalty": 4,
     "built_penalty": 2,
-    "bare_penalty": 0.5
+    "bare_penalty": 0.5,
+    "score_weights": {
+      "BASE": 1
+    }
   },
   "bs": {
     "default_thresholds": [

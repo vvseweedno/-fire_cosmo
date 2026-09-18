@@ -18,6 +18,7 @@ class AFConfig:
     water_snow_penalty: float = 4.0
     built_penalty: float = 2.0
     bare_penalty: float = 0.5
+    score_weights: dict[str, float] = field(default_factory=lambda: {"BASE": 1.0})
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ class BSConfig:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    version: int = 3
+    version: int = 4
     af: AFConfig = field(default_factory=AFConfig)
     bs: BSConfig = field(default_factory=BSConfig)
     training: dict[str, Any] = field(default_factory=dict)
@@ -83,6 +84,7 @@ def model_config_from_dict(payload: dict[str, Any]) -> ModelConfig:
         water_snow_penalty=float(af_payload.get("water_snow_penalty", 4.0)),
         built_penalty=float(af_payload.get("built_penalty", 2.0)),
         bare_penalty=float(af_payload.get("bare_penalty", 0.5)),
+        score_weights=_score_weights(af_payload.get("score_weights")),
     )
     bs = BSConfig(
         default_thresholds=_triple(
