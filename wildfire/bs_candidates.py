@@ -11,7 +11,7 @@ valid-mask contract and makes OOF alignment safe.
 
 # ruff: noqa: I001\n\nfrom __future__ import annotations
 
-import numpy as np
+import numpy as np  # noqa: I001
 
 from wildfire.features import burn_physics_features, robust_z
 from wildfire.fusion import burn_fusion_components, fuse_burn_score
