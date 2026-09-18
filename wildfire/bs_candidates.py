@@ -9,7 +9,7 @@ missing or optical pixels are invalid.  This gives every candidate the same
 valid-mask contract and makes OOF alignment safe.
 """
 
-from __future__ import annotations
+# ruff: noqa: I001\n\nfrom __future__ import annotations
 
 import numpy as np
 
