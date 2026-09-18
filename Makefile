@@ -1,4 +1,4 @@
-.PHONY: install test lint check serve docker
+.PHONY: install test lint check serve docker finalize
 
 install:
 	python -m pip install -e ".[dev]"
@@ -16,3 +16,8 @@ serve:
 
 docker:
 	docker build -t ready-prototype .
+
+finalize:
+	@test -n "$(TRAIN_DIR)" || (echo "TRAIN_DIR is required" && exit 2)
+	@test -n "$(TEST_DIR)" || (echo "TEST_DIR is required" && exit 2)
+	python scripts/finalize_competition.py --train-dir "$(TRAIN_DIR)" --test-dir "$(TEST_DIR)" --work-dir "$${WORK_DIR:-final_run}"
