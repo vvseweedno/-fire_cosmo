@@ -1,23 +1,42 @@
 {
-  "version": 2,
+  "version": 3,
   "af": {
-    "threshold": 4.0,
+    "threshold": 4,
     "z4_weight": 1.1,
     "z5_weight": -0.3,
     "local_anomaly_weight": 0.85,
     "i3_sunglint_penalty": 0.1,
-    "water_snow_penalty": 4.0,
-    "built_penalty": 2.0,
+    "water_snow_penalty": 4,
+    "built_penalty": 2,
     "bare_penalty": 0.5
   },
   "bs": {
-    "default_thresholds": [0.1, 0.27, 0.44],
-    "natural_open_thresholds": [0.08, 0.2, 0.35],
-    "crop_thresholds": [0.18, 0.32, 0.48],
-    "forest_thresholds": [0.1, 0.27, 0.44],
+    "default_thresholds": [
+      0.1,
+      0.27,
+      0.44
+    ],
+    "natural_open_thresholds": [
+      0.08,
+      0.2,
+      0.35
+    ],
+    "crop_thresholds": [
+      0.18,
+      0.32,
+      0.48
+    ],
+    "forest_thresholds": [
+      0.1,
+      0.27,
+      0.44
+    ],
     "sar_weight": 0.025,
-    "cloud_sar_weight": 0.0,
-    "sar_clip": 3.0
+    "cloud_sar_weight": 0,
+    "sar_clip": 3,
+    "score_weights": {
+      "BASE": 1
+    }
   },
   "training": {}
 }
