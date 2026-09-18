@@ -82,3 +82,18 @@ def test_api_aoi_returns_only_configured_geojson_metadata(tmp_path: Path, monkey
         "max_lon": 48.0,
         "max_lat": 52.3,
     }
+
+
+def test_api_models_never_claims_unverified_accuracy():
+    response = client.get("/api/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accuracy"] == {
+        "status": "UNVERIFIED_ON_ORGANIZER_LABELS",
+        "metrics": None,
+    }
+    assert payload["capabilities"]["active_fire"][
+        "implemented_inference_adapters"
+    ] == ["VIIRS"]
+    assert "MODIS" in payload["capabilities"]["active_fire"]["public_sensor_families"]
