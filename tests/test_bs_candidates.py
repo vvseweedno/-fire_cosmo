@@ -105,3 +105,33 @@ def test_model_config_can_deploy_non_baseline_candidate_weights():
 
     assert np.all(np.isfinite(score[valid]))
     assert not np.allclose(score[valid], base[valid])
+
+
+def test_sar_ablation_candidates_change_clear_pixel_score_when_sar_exists():
+    channels = _channels()
+    shape = next(iter(channels.values())).shape
+    channels["VH_PRE"] = np.array(
+        [
+            [1.0, 1.2, 1.4, 1.6],
+            [1.1, 1.3, 1.5, 1.7],
+            [1.2, 1.4, 1.6, 1.8],
+        ],
+        dtype=np.float32,
+    )
+    channels["VH_POST"] = np.full(shape, 0.9, dtype=np.float32)
+
+    candidates, valid = burn_score_candidates(channels, ModelConfig())
+
+    assert np.any(valid)
+    assert not np.allclose(
+        candidates["SAR_CLEAR_P010"][valid],
+        candidates["BASE"][valid],
+    )
+    assert not np.allclose(
+        candidates["SAR_CLEAR_M010"][valid],
+        candidates["BASE"][valid],
+    )
+    assert np.allclose(
+        candidates["CLEAR_SAR_0"][valid],
+        burn_fusion_components(channels).optical_score[valid],
+    )

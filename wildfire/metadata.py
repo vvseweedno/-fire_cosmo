@@ -22,10 +22,19 @@ class ChipMeta:
 
     @property
     def split_group(self) -> str:
-        """Group chips from one known fire together; isolated chips get their own group."""
+        """Keep known fire/event groups intact; isolated chips remain identifiable."""
         if self.fire_event_id:
             return f"event:{self.fire_event_id}"
         return f"chip:{self.chip_id}"
+
+
+def _first_group_id(row: dict[str, str | None]) -> str | None:
+    """Accept common organiser-provided grouping column names without guessing."""
+    for key in ("fire_event_id", "event_id", "incident_id", "group_id"):
+        value = (row.get(key) or "").strip()
+        if value:
+            return value
+    return None
 
 
 def read_meta_csv(path: str | Path) -> dict[str, ChipMeta]:
@@ -51,13 +60,12 @@ def read_meta_csv(path: str | Path) -> dict[str, ChipMeta]:
             if kind not in {"af", "bs"}:
                 raise ValueError(f"meta.csv line {line_no}: invalid kind {kind!r}")
 
-            fire_event_id = (row.get("fire_event_id") or "").strip() or None
             result[chip_id] = ChipMeta(
                 chip_id=chip_id,
                 kind=kind,
                 width=int(row["width"]),
                 height=int(row["height"]),
                 gsd=float(row["gsd"]),
-                fire_event_id=fire_event_id,
+                fire_event_id=_first_group_id(row),
             )
     return result
