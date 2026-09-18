@@ -11,6 +11,7 @@ venv/
 dist/
 build/
 outputs/
+artifacts/
 submission*.csv
 data/train/
 data/test/

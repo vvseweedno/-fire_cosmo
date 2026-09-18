@@ -1,8 +1,4 @@
-"""Fast deterministic baselines derived from the case physics.
-
-They are intentionally simple and auditable. Their purpose is to produce a valid first
-submission and a measurable baseline immediately after the official dataset arrives.
-"""
+"""Fast, auditable baselines derived from the case physics."""
 
 from __future__ import annotations
 
@@ -23,6 +19,7 @@ from wildfire.constants import (
     LC_WETLAND,
 )
 from wildfire.features import dnbr, local_mean_3x3, robust_z
+from wildfire.model_config import ModelConfig
 
 
 def _valid_mask(channels: dict[str, np.ndarray], shape: tuple[int, int]) -> np.ndarray:
@@ -32,11 +29,12 @@ def _valid_mask(channels: dict[str, np.ndarray], shape: tuple[int, int]) -> np.n
     return valid
 
 
-def predict_active_fire(
+def active_fire_score(
     channels: dict[str, np.ndarray],
-    threshold: float = 4.0,
-) -> np.ndarray:
-    """VIIRS active-fire baseline using MIR/TIR contrast and spatial anomaly."""
+    config: ModelConfig | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return AF decision score and the model-side valid mask."""
+    cfg = (config or ModelConfig()).af
     i4 = np.asarray(channels["I4"], dtype=np.float32)
     i5 = np.asarray(channels["I5"], dtype=np.float32)
     if i4.shape != i5.shape:
@@ -47,46 +45,76 @@ def predict_active_fire(
     z5 = robust_z(i5, valid)
     local_anomaly = z4 - local_mean_3x3(z4)
 
-    score = 1.10 * z4 - 0.30 * z5 + 0.85 * local_anomaly
+    score = (
+        cfg.z4_weight * z4
+        + cfg.z5_weight * z5
+        + cfg.local_anomaly_weight * local_anomaly
+    )
     if "I3" in channels:
-        # I3 is useful as a conservative sunglint/context penalty.
-        score -= 0.10 * np.maximum(robust_z(channels["I3"], valid), 0.0)
+        score -= cfg.i3_sunglint_penalty * np.maximum(
+            robust_z(channels["I3"], valid),
+            0.0,
+        )
 
     if "LANDCOVER" in channels:
         lc = np.asarray(channels["LANDCOVER"])
         score = score.copy()
-        score[np.isin(lc, [LC_WATER, LC_SNOW])] -= 4.0
-        score[lc == LC_BUILT] -= 2.0
-        score[lc == LC_BARE] -= 0.5
+        score[np.isin(lc, [LC_WATER, LC_SNOW])] -= cfg.water_snow_penalty
+        score[lc == LC_BUILT] -= cfg.built_penalty
+        score[lc == LC_BARE] -= cfg.bare_penalty
 
-    mask = (score >= threshold) & valid & np.isfinite(score)
-    return mask.astype(np.uint8)
+    score = np.where(np.isfinite(score), score, -np.inf).astype(np.float32, copy=False)
+    return score, valid
+
+
+def predict_active_fire(
+    channels: dict[str, np.ndarray],
+    config: ModelConfig | None = None,
+    *,
+    threshold: float | None = None,
+) -> np.ndarray:
+    """VIIRS active-fire baseline using MIR/TIR contrast and spatial anomaly."""
+    resolved = config or ModelConfig()
+    score, valid = active_fire_score(channels, resolved)
+    decision_threshold = resolved.af.threshold if threshold is None else float(threshold)
+    return ((score >= decision_threshold) & valid).astype(np.uint8)
 
 
 def _threshold_arrays(
     landcover: np.ndarray | None,
     shape: tuple[int, int],
+    config: ModelConfig,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    low = np.full(shape, 0.10, dtype=np.float32)
-    moderate = np.full(shape, 0.27, dtype=np.float32)
-    high = np.full(shape, 0.44, dtype=np.float32)
+    low = np.full(shape, config.bs.default_thresholds[0], dtype=np.float32)
+    moderate = np.full(shape, config.bs.default_thresholds[1], dtype=np.float32)
+    high = np.full(shape, config.bs.default_thresholds[2], dtype=np.float32)
     if landcover is None:
         return low, moderate, high
 
     lc = np.asarray(landcover)
     natural_open = np.isin(lc, [LC_SHRUB, LC_GRASS, LC_WETLAND, LC_MANGROVE, LC_MOSS])
-    low[natural_open], moderate[natural_open], high[natural_open] = 0.08, 0.20, 0.35
+    low[natural_open] = config.bs.natural_open_thresholds[0]
+    moderate[natural_open] = config.bs.natural_open_thresholds[1]
+    high[natural_open] = config.bs.natural_open_thresholds[2]
 
     crop = lc == LC_CROP
-    low[crop], moderate[crop], high[crop] = 0.18, 0.32, 0.48
+    low[crop] = config.bs.crop_thresholds[0]
+    moderate[crop] = config.bs.crop_thresholds[1]
+    high[crop] = config.bs.crop_thresholds[2]
 
     forest = lc == LC_TREE
-    low[forest], moderate[forest], high[forest] = 0.10, 0.27, 0.44
+    low[forest] = config.bs.forest_thresholds[0]
+    moderate[forest] = config.bs.forest_thresholds[1]
+    high[forest] = config.bs.forest_thresholds[2]
     return low, moderate, high
 
 
-def predict_burn_severity(channels: dict[str, np.ndarray]) -> np.ndarray:
-    """Sentinel-2 dNBR baseline with SCL and land-cover-aware severity thresholds."""
+def predict_burn_severity(
+    channels: dict[str, np.ndarray],
+    config: ModelConfig | None = None,
+) -> np.ndarray:
+    """Sentinel-2 dNBR baseline with SCL and land-cover-aware thresholds."""
+    resolved = config or ModelConfig()
     d = dnbr(
         channels["B8A_PRE"],
         channels["B12_PRE"],
@@ -99,10 +127,8 @@ def predict_burn_severity(channels: dict[str, np.ndarray]) -> np.ndarray:
             valid &= ~np.isin(np.asarray(channels[key]), list(INVALID_SCL))
 
     landcover = channels.get("LANDCOVER")
-    low, moderate, high = _threshold_arrays(landcover, d.shape)
+    low, moderate, high = _threshold_arrays(landcover, d.shape, resolved)
 
-    # Optional SAR support: strong post-fire VH decrease can slightly lower the
-    # burn threshold, but never creates a burn without optical evidence.
     adjusted = d.copy()
     if "VH_PRE" in channels and "VH_POST" in channels:
         sar_delta = robust_z(
@@ -110,7 +136,11 @@ def predict_burn_severity(channels: dict[str, np.ndarray]) -> np.ndarray:
             - np.asarray(channels["VH_POST"], dtype=np.float32),
             valid,
         )
-        adjusted += 0.025 * np.clip(sar_delta, 0.0, 3.0)
+        adjusted += resolved.bs.sar_weight * np.clip(
+            sar_delta,
+            0.0,
+            resolved.bs.sar_clip,
+        )
 
     result = np.zeros(d.shape, dtype=np.uint8)
     result[(adjusted >= low) & valid] = 1
@@ -123,10 +153,14 @@ def predict_burn_severity(channels: dict[str, np.ndarray]) -> np.ndarray:
     return result
 
 
-def predict(channels: dict[str, np.ndarray], task: str) -> np.ndarray:
+def predict(
+    channels: dict[str, np.ndarray],
+    task: str,
+    config: ModelConfig | None = None,
+) -> np.ndarray:
     task_upper = task.upper()
     if task_upper == "AF":
-        return predict_active_fire(channels)
+        return predict_active_fire(channels, config)
     if task_upper == "BS":
-        return predict_burn_severity(channels)
+        return predict_burn_severity(channels, config)
     raise ValueError(f"Unknown task: {task}")

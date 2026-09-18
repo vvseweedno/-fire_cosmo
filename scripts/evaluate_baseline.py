@@ -12,6 +12,7 @@ import numpy as np
 from wildfire.baselines import predict
 from wildfire.evaluation import CompetitionEvaluator, evaluation_mask
 from wildfire.io import discover_chips, infer_task, load_channels
+from wildfire.model_config import load_model_config
 from wildfire.split import read_split_manifest
 
 
@@ -45,11 +46,13 @@ def run(
     *,
     use_valid_mask: bool = False,
     selected_chip_ids: set[str] | None = None,
+    model_config: str | Path | None = None,
 ) -> dict[str, object]:
     evaluator = CompetitionEvaluator()
     per_chip: list[dict[str, object]] = []
     missing_target: list[str] = []
     started = perf_counter()
+    config = load_model_config(model_config)
 
     chips = discover_chips(data_dir)
     if selected_chip_ids is not None:
@@ -71,7 +74,7 @@ def run(
         task = infer_task(channels)
         target = np.asarray(channels["TARGET"])
         pred_started = perf_counter()
-        pred = predict(channels, task)
+        pred = predict(channels, task, config)
         latency_ms = (perf_counter() - pred_started) * 1000.0
 
         if pred.shape != target.shape:
@@ -116,6 +119,7 @@ def run(
                 "use_valid_mask": use_valid_mask,
                 "ignore_value": ignore_value,
             },
+            "model_config": str(model_config) if model_config else "built-in defaults",
             "per_chip": per_chip,
         }
     )
@@ -128,6 +132,7 @@ def main() -> None:
     parser.add_argument("--output", default="outputs/baseline_metrics.json")
     parser.add_argument("--ignore-value", type=float, default=None)
     parser.add_argument("--split-manifest")
+    parser.add_argument("--model-config", default="configs/baseline.json")
     parser.add_argument(
         "--partition",
         choices=("train", "validation"),
@@ -151,6 +156,7 @@ def main() -> None:
         args.ignore_value,
         use_valid_mask=args.use_valid_mask,
         selected_chip_ids=selected,
+        model_config=args.model_config,
     )
     report["partition"] = args.partition if args.split_manifest else "all"
 

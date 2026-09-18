@@ -12,6 +12,7 @@ from pathlib import Path
 from wildfire.baselines import predict
 from wildfire.io import discover_chips, load_channels
 from wildfire.metadata import read_meta_csv
+from wildfire.model_config import load_model_config
 from wildfire.submission import (
     Prediction,
     read_submission_template,
@@ -19,13 +20,18 @@ from wildfire.submission import (
 )
 
 
-def run(data_dir: str | Path, output: str | Path) -> int:
+def run(
+    data_dir: str | Path,
+    output: str | Path,
+    model_config: str | Path = "configs/baseline.json",
+) -> int:
     root = Path(data_dir)
     template_path = root / "sample_submission.csv"
     meta_path = root / "meta.csv"
 
     template = read_submission_template(template_path)
     meta = read_meta_csv(meta_path)
+    config = load_model_config(model_config)
 
     discovered = {chip.chip_id: chip for chip in discover_chips(root)}
     required_chip_ids = list(dict.fromkeys(row.chip_id for row in template))
@@ -44,7 +50,7 @@ def run(data_dir: str | Path, output: str | Path) -> int:
 
         channels = load_channels(chip)
         task = chip_meta.kind.upper()
-        mask = predict(channels, task)
+        mask = predict(channels, task, config)
         if tuple(mask.shape) != chip_meta.shape:
             raise RuntimeError(
                 f"{chip_id}: prediction shape {mask.shape} != meta.csv shape {chip_meta.shape}"
@@ -61,8 +67,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--model-config", default="configs/baseline.json")
     args = parser.parse_args()
-    rows = run(args.data_dir, args.output)
+    rows = run(args.data_dir, args.output, args.model_config)
     print(f"Wrote {rows} template-aligned submission rows to {args.output}")
 
 

@@ -11,7 +11,8 @@ COPY pyproject.toml README.md ./
 COPY wildfire ./wildfire
 COPY app ./app
 COPY scripts ./scripts
-COPY inference.py ./
+COPY configs ./configs
+COPY inference.py train.py ./
 
 RUN python -m pip install --upgrade pip \
     && pip install .
