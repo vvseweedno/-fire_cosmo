@@ -141,14 +141,18 @@ python scripts/evaluate_crossfit_oof.py \
 python scripts/generate_bs_candidate_oof.py \
   --data-dir /path/to/train \
   --fold-manifest splits/folds_seed42.json \
-  --model-config artifacts/crossfit_deployment_config.json \
+  --model-config configs/baseline.json \
   --output-root outputs/oof_bs_candidates
 
 python scripts/evaluate_crossfit_bs_candidates.py \
   --candidate-root outputs/oof_bs_candidates \
   --fold-manifest splits/folds_seed42.json \
-  --base-config artifacts/crossfit_deployment_config.json \
+  --base-config configs/baseline.json \
   --output outputs/crossfit_bs_candidate_ensemble.json
+
+# Важно: cross-fitted candidate comparison получает только frozen baseline
+# config. Pooled OOF thresholds нельзя подавать обратно в fold-wise evaluation,
+# иначе holdout labels попадут в optimizer initialization.
 
 # Выполнять promotion только если promotion_allowed=true.
 python scripts/optimize_bs_candidate_ensemble.py \
