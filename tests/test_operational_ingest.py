@@ -70,6 +70,13 @@ def test_observation_requires_explicit_source_provenance():
         validate_observation(observation)
 
 
+def test_observation_requires_explicit_sensor_provenance():
+    observation = _obs(sensor="   ")
+
+    with pytest.raises(ValueError, match="sensor provenance is required"):
+        validate_observation(observation)
+
+
 def test_observation_requires_timezone_aware_timestamp():
     naive = _obs(acquired_at=datetime(2026, 7, 1, 10, 0))
 
