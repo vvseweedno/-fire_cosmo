@@ -36,8 +36,10 @@ def _normalise_sensor(value: str) -> str:
 
 
 def _normalise_channels(channels: tuple[str, ...]) -> tuple[str, ...]:
-    normalized = tuple(str(channel).strip().upper() for channel in channels)
-    if not normalized or any(not channel for channel in normalized):
+    if not channels or any(not isinstance(channel, str) for channel in channels):
+        raise ValueError("observation channels must be non-empty strings")
+    normalized = tuple(channel.strip().upper() for channel in channels)
+    if any(not channel for channel in normalized):
         raise ValueError("observation channels must be non-empty strings")
     if len(set(normalized)) != len(normalized):
         raise ValueError("observation channels must be unique")
