@@ -167,7 +167,7 @@ def build_burn_pair(
     validate_observation(pre)
     validate_observation(post)
 
-    if pre.observation_id == post.observation_id:
+    if pre.observation_id.strip() == post.observation_id.strip():
         raise ValueError("pre/post observations must have distinct observation_id values")
     if pre.normalized_sensor != "SENTINEL-2" or post.normalized_sensor != "SENTINEL-2":
         raise ValueError("burn observation pair currently requires Sentinel-2")
