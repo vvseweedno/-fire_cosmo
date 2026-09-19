@@ -115,6 +115,19 @@ def test_capabilities_separate_public_and_implemented_sensor_families():
     ]
 
 
+def test_capability_channel_requirements_match_readiness_contract():
+    capabilities = operational_capabilities()
+
+    assert capabilities["active_fire"]["implemented_viirs_minimum_channels"] == [
+        "I4",
+        "I5",
+    ]
+    assert capabilities["burn_assessment"][
+        "implemented_sentinel2_minimum_channels"
+    ] == ["B12", "B8A"]
+    assert observation_readiness(_obs(), "AF")["required_channels"] == ["I4", "I5"]
+
+
 def test_build_burn_pair_requires_ordered_coregistered_sentinel2():
     pre = _obs(
         observation_id="pre",
