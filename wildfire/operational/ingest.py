@@ -100,7 +100,7 @@ def operational_capabilities() -> dict[str, object]:
         "active_fire": {
             "public_sensor_families": list(_PUBLIC_AF_SENSORS),
             "implemented_inference_adapters": list(_IMPLEMENTED_AF_SENSORS),
-            "implemented_viirs_minimum_channels": ["I4", "I5"],
+            "implemented_viirs_minimum_channels": ["I1", "I2", "I3", "I4", "I5"],
         },
         "burn_assessment": {
             "public_sensor_families": list(_PUBLIC_BS_SENSORS),

@@ -89,7 +89,14 @@ def _validate_submission(data_dir: Path, submission: Path) -> dict[str, object]:
     template = read_submission_template(data_dir / "sample_submission.csv")
     meta = read_meta_csv(data_dir / "meta.csv")
     shapes = {chip_id: item.shape for chip_id, item in meta.items()}
-    errors = validate_submission_against_template(submission, template, shapes)
+    tasks = {chip_id: item.kind for chip_id, item in meta.items()}
+    errors = validate_submission_against_template(
+        submission,
+        template,
+        shapes,
+        tasks=tasks,
+        expected_row_count=447,
+    )
     if errors:
         raise RuntimeError("invalid submission: " + "; ".join(errors[:10]))
     return {

@@ -48,9 +48,16 @@ def run(
                 "Run scripts/inspect_dataset.py and adapt wildfire/io.py to the official layout."
             )
 
-        channels = load_channels(chip)
         task = chip_meta.kind.upper()
-        mask = predict(channels, task, config)
+        try:
+            channels = load_channels(chip)
+            mask = predict(channels, task, config)
+        except Exception as exc:
+            files = sorted({str(source.path) for source in chip.channels.values()})
+            raise RuntimeError(
+                f"{chip_id}: inference failed for task={task}; "
+                f"files={files}; {type(exc).__name__}: {exc}"
+            ) from exc
         if tuple(mask.shape) != chip_meta.shape:
             raise RuntimeError(
                 f"{chip_id}: prediction shape {mask.shape} != meta.csv shape {chip_meta.shape}"

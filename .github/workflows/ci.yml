@@ -37,6 +37,9 @@ jobs:
           client = TestClient(app)
           assert client.get("/health").json()["status"] == "ok"
           assert client.get("/api/spec").status_code == 200
+          assert client.get("/api/summary").json()["total_burn_area_ha"] > 0
+          assert client.get("/api/export/geojson").status_code == 200
+          assert client.get("/map").status_code == 200
           PY
       - name: Docker build
         run: docker build -t ready-prototype:ci .

@@ -286,3 +286,82 @@ python scripts/validate_submission.py \
 - docs/OPERATIONAL_ARCHITECTURE.md
 - docs/ZIP_MATH_TRANSFER.md
 - docs/ACCURACY_GUARANTEES.md
+- docs/ARCHITECTURE.md
+
+## Official role-based data adapter
+
+The loader accepts the official role-based GeoTIFF layout directly. The
+filename identifies the chip and observation role; fixed physical channel
+orders are used only for the documented stacks:
+
+```text
+AF_<chip>_VIIRS_I1-I5.tif
+AF_<chip>_AUX.tif
+BS_<chip>_Sentinel-2_pre.tif
+BS_<chip>_Sentinel-2_post.tif
+BS_<chip>_Sentinel-1_pre.tif
+BS_<chip>_Sentinel-1_post.tif
+BS_<chip>_AUX.tif
+<chip>_mask.tif / <chip>_target.tif
+```
+
+VIIRS I1-I5 and Sentinel-1 VV/VH use their documented order. Sentinel-2
+supports the compact B8A/B12 fixture and the nine- or ten-band optical stacks;
+an unlabelled stack with another band count fails preflight. Ambiguous auxiliary
+multiband rasters still require band descriptions or an explicit sidecar.
+
+Run the hard checks before any model experiment:
+
+```bash
+python scripts/preflight_dataset.py --data-dir /path/to/train --mode train --deep
+python scripts/preflight_dataset.py --data-dir /path/to/test --mode test --deep
+python inference.py --data-dir /path/to/test --output submission.csv
+python scripts/validate_submission.py --data-dir /path/to/test --submission submission.csv
+```
+
+The validator checks exact template pair order, UTF-8 CSV structure, canonical
+row-major 1-based RLE, bounds, round-trip encoding, and mutually exclusive BS
+classes. Inference errors fail loudly with the chip id and source files.
+
+## Runtime and readiness evidence
+
+Measure the real production command, including process startup, model loading,
+preprocessing, prediction, RLE, and CSV close:
+
+```bash
+python scripts/benchmark_inference.py \
+  --data-dir /path/to/test \
+  --output-dir final_run/artifacts/benchmark_inference \
+  --output final_run/artifacts/benchmark_inference.json
+python scripts/readiness_scorecard.py \
+  --work-dir final_run \
+  --output final_run/artifacts/readiness_scorecard.json
+python scripts/reproduce_final.py \
+  --work-dir final_run \
+  --output release/final_manifest.json
+```
+
+The scorecard reports `NOT READY` while labelled evidence, exact-source CI,
+submission hashes, or runtime measurements are absent. It does not convert
+historical metrics into release evidence.
+
+## Offline service demo
+
+The service runs without external tiles or network data and reads the synthetic
+catalog in `service/demo_results.geojson` by default. Set
+`WILDFIRE_RESULTS_GEOJSON` to an explicit result catalog for a real run:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+curl http://localhost:8000/api/summary
+curl 'http://localhost:8000/api/query?bbox=37.5,55.7,37.8,55.9&start_date=2026-07-01&end_date=2026-07-31'
+curl -OJ http://localhost:8000/api/export/geojson
+```
+
+`POST /api/query` accepts a polygon or bbox and a date interval. `/map` is a
+dependency-free offline map view. Area values are accepted only with explicit
+projected-raster pixel metadata (`pixel_count` and `pixel_area_m2`).
+
+Research, presentation, defense, compliance, and license sources live in:
+`docs/REPORT.md`, `docs/PRESENTATION.md`, `docs/DEFENSE_QA.md`,
+`docs/DATA_COMPLIANCE.md`, and `THIRD_PARTY_LICENSES.md`.

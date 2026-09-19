@@ -1,4 +1,4 @@
-.PHONY: install test lint check serve docker preflight-train preflight-test release-gate smoke-inference finalize
+.PHONY: install test lint check serve docker preflight-train preflight-test release-gate smoke-inference benchmark scorecard manifest finalize
 
 install:
 	python -m pip install -e ".[dev]"
@@ -32,6 +32,16 @@ release-gate:
 smoke-inference:
 	@test -n "$(TEST_DIR)" || (echo "TEST_DIR is required" && exit 2)
 	python inference.py --data-dir "$(TEST_DIR)" --output "$${WORK_DIR:-final_run}/submission_smoke.csv" $${MODEL_CONFIG:+--model-config "$$MODEL_CONFIG"}
+
+benchmark:
+	@test -n "$(TEST_DIR)" || (echo "TEST_DIR is required" && exit 2)
+	python scripts/benchmark_inference.py --data-dir "$(TEST_DIR)" --output-dir "$${WORK_DIR:-final_run}/artifacts/benchmark_inference" --output "$${WORK_DIR:-final_run}/artifacts/benchmark_inference.json" $${MODEL_CONFIG:+--model-config "$$MODEL_CONFIG"}
+
+scorecard:
+	python scripts/readiness_scorecard.py --work-dir "$${WORK_DIR:-final_run}" --output "$${WORK_DIR:-final_run}/artifacts/readiness_scorecard.json"
+
+manifest:
+	python scripts/reproduce_final.py --work-dir "$${WORK_DIR:-final_run}" --output release/final_manifest.json
 
 finalize:
 	@test -n "$(TRAIN_DIR)" || (echo "TRAIN_DIR is required" && exit 2)

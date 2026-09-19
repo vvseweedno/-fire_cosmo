@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from wildfire.constants import AF_CLASS_IDS, BS_CLASS_IDS
-from wildfire.rle import decode_binary_mask, encode_class
+from wildfire.rle import decode_binary_mask, encode_binary_mask, encode_class
 
 
 @dataclass(frozen=True)
@@ -145,21 +145,35 @@ def validate_submission(
         class_ids = AF_CLASS_IDS if task == "AF" else BS_CLASS_IDS
         template.extend(TemplateRow(chip_id, class_id) for class_id in class_ids)
         shapes[chip_id] = shape
-    return validate_submission_against_template(submission, template, shapes)
+    tasks = {chip_id: task for chip_id, (task, _shape) in expected.items()}
+    return validate_submission_against_template(submission, template, shapes, tasks=tasks)
 
 
 def validate_submission_against_template(
     submission: str | Path,
     template: Iterable[TemplateRow],
     shapes: Mapping[str, tuple[int, int]],
+    *,
+    tasks: Mapping[str, str] | None = None,
+    expected_row_count: int | None = None,
 ) -> list[str]:
-    """Validate exact pair set, strict RLE syntax, bounds, and class non-overlap."""
+    """Validate exact template order, canonical RLE, bounds, and class exclusivity."""
     source = Path(submission)
     errors: list[str] = []
     expected_rows = list(template)
     expected_pairs = {(row.chip_id, row.class_id) for row in expected_rows}
+    if expected_row_count is not None and len(expected_rows) != expected_row_count:
+        errors.append(
+            f"template row count mismatch: expected official {expected_row_count}, "
+            f"got {len(expected_rows)}"
+        )
 
-    raw_lines = source.read_text(encoding="utf-8-sig").splitlines()
+    try:
+        raw_lines = source.read_text(encoding="utf-8-sig").splitlines()
+    except UnicodeDecodeError as exc:
+        return [f"submission is not valid UTF-8: {exc}"]
+    except OSError as exc:
+        return [f"submission cannot be read: {exc}"]
     if not raw_lines or raw_lines[0] != "chip_id,class_id,rle":
         return ["Header must be exactly: chip_id,class_id,rle"]
 
@@ -171,18 +185,20 @@ def validate_submission_against_template(
             )
 
     seen: set[tuple[str, int]] = set()
+    actual_pairs: list[tuple[str, int]] = []
     decoded_by_chip: dict[str, list[np.ndarray]] = {}
     with source.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         for line_no, row in enumerate(reader, start=2):
-            chip_id = row.get("chip_id", "")
+            chip_id = row.get("chip_id") or ""
             try:
-                class_id = int(row.get("class_id", ""))
-            except ValueError:
+                class_id = int(row.get("class_id") or "")
+            except (TypeError, ValueError):
                 errors.append(f"line {line_no}: invalid class_id")
                 continue
 
             key = (chip_id, class_id)
+            actual_pairs.append(key)
             if key not in expected_pairs:
                 errors.append(f"line {line_no}: unexpected row {key}")
                 continue
@@ -195,12 +211,29 @@ def validate_submission_against_template(
             if shape is None:
                 errors.append(f"line {line_no}: missing shape metadata for {chip_id}")
                 continue
+            if tasks is not None:
+                task = str(tasks.get(chip_id, "")).upper()
+                allowed = AF_CLASS_IDS if task == "AF" else BS_CLASS_IDS if task == "BS" else ()
+                if class_id not in allowed:
+                    errors.append(
+                        f"line {line_no}: class {class_id} is invalid for {chip_id} task {task or 'UNKNOWN'}"
+                    )
+                    continue
             try:
-                decoded = decode_binary_mask(row.get("rle", ""), shape)
+                rle = row.get("rle") or ""
+                decoded = decode_binary_mask(rle, shape)
             except (TypeError, ValueError) as exc:
                 errors.append(f"line {line_no}: bad RLE: {exc}")
                 continue
+            canonical = encode_binary_mask(decoded)
+            if rle != canonical:
+                errors.append(
+                    f"line {line_no}: non-canonical RLE; expected {canonical!r}"
+                )
             decoded_by_chip.setdefault(chip_id, []).append(decoded)
+
+    if actual_pairs != [(row.chip_id, row.class_id) for row in expected_rows]:
+        errors.append("row order mismatch: submission must follow sample_submission.csv exactly")
 
     missing = expected_pairs - seen
     for key in sorted(missing):

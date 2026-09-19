@@ -12,7 +12,7 @@ from wildfire.metadata import read_meta_csv
 from wildfire.submission import read_submission_template
 
 REQUIRED_CHANNELS = {
-    "AF": {"I4", "I5"},
+    "AF": {"I1", "I2", "I3", "I4", "I5"},
     "BS": {"B8A_PRE", "B12_PRE", "B8A_POST", "B12_POST"},
 }
 

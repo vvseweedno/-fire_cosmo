@@ -1,9 +1,11 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+import inference as inference_module
 from inference import run
 from wildfire.submission import (
     read_submission_template,
@@ -75,3 +77,29 @@ def test_inference_end_to_end_on_stacked_geotiffs(tmp_path: Path):
         {"af_001": shape, "bs_001": shape},
     )
     assert errors == []
+
+
+def test_inference_fails_loudly_with_chip_and_source_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    chip = tmp_path / "af_001"
+    chip.mkdir()
+    np.save(chip / "I4.npy", np.ones((2, 2), dtype=np.float32))
+    np.save(chip / "I5.npy", np.ones((2, 2), dtype=np.float32))
+    (tmp_path / "meta.csv").write_text(
+        "chip_id,kind,width,height,gsd\naf_001,af,2,2,375\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sample_submission.csv").write_text(
+        'chip_id,class_id,rle\naf_001,1,""\n',
+        encoding="utf-8",
+    )
+
+    def fail_predict(*_args, **_kwargs):
+        raise ValueError("synthetic model failure")
+
+    monkeypatch.setattr(inference_module, "predict", fail_predict)
+
+    with pytest.raises(RuntimeError, match=r"af_001: inference failed.*I4\.npy"):
+        run(tmp_path, tmp_path / "submission.csv")
