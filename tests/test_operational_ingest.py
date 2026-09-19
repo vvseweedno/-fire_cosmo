@@ -174,6 +174,24 @@ def test_build_burn_pair_rejects_same_observation_id():
         build_burn_pair(pre, post)
 
 
+def test_build_burn_pair_rejects_same_observation_id_with_padding():
+    pre = _obs(
+        observation_id="same-scene",
+        sensor="Sentinel-2",
+        channels=("B8A", "B12"),
+        acquired_at=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+    post = _obs(
+        observation_id="  same-scene  ",
+        sensor="Sentinel-2",
+        channels=("B8A", "B12"),
+        acquired_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValueError, match="distinct observation_id"):
+        build_burn_pair(pre, post)
+
+
 def test_build_burn_pair_rejects_reversed_time():
     pre = _obs(
         observation_id="pre",
