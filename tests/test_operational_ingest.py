@@ -77,6 +77,13 @@ def test_observation_requires_explicit_sensor_provenance():
         validate_observation(observation)
 
 
+def test_observation_rejects_non_string_channel_metadata():
+    observation = _obs(channels=("I4", None))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="channels must be non-empty strings"):
+        validate_observation(observation)
+
+
 def test_observation_requires_timezone_aware_timestamp():
     naive = _obs(acquired_at=datetime(2026, 7, 1, 10, 0))
 
