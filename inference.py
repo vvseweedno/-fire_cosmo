@@ -24,13 +24,10 @@ from wildfire.submission import (
 )
 
 
-DEFAULT_MODEL_CONFIG = Path(__file__).resolve().parent / "configs" / "baseline.json"
-
-
 def run(
     data_dir: str | Path,
     output: str | Path,
-    model_config: str | Path | None = None,
+    model_config: str | Path = "configs/baseline.json",
 ) -> int:
     root = Path(data_dir)
     output_path = Path(output)
@@ -48,8 +45,7 @@ def run(
             "sample_submission.csv and meta.csv task contract failed: "
             + "; ".join(task_contract_errors)
         )
-    config_path = Path(model_config) if model_config is not None else DEFAULT_MODEL_CONFIG
-    config = load_model_config(config_path)
+    config = load_model_config(model_config)
 
     discovered = {}
     duplicate_chip_ids: set[str] = set()
@@ -95,7 +91,7 @@ def run(
             )
         predictions[chip_id] = Prediction(chip_id=chip_id, task=task, mask=mask)
 
-    # Stage the candidate beside the requested destination. Validation happens
+    # Stage the candidate beside the requested destination.  Validation happens
     # before os.replace(), so a failed run can never clobber a previously valid
     # submission and successful publication is atomic on the destination FS.
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +127,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--model-config", default=None)
+    parser.add_argument("--model-config", default="configs/baseline.json")
     args = parser.parse_args()
     rows = run(args.data_dir, args.output, args.model_config)
     print(f"Wrote {rows} template-aligned submission rows to {args.output}")
