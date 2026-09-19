@@ -50,6 +50,23 @@ def test_query_post_accepts_polygon_and_geojson_export_is_machine_readable():
     assert exported.json()["type"] == "FeatureCollection"
 
 
+def test_polygon_filter_does_not_use_bbox_overlap_as_a_match():
+    response = client.post(
+        "/api/query",
+        json={
+            "polygon": [[37.60, 55.85], [37.70, 55.85], [37.70, 55.73], [37.60, 55.85]],
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-02",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_fire_points"]["features"] == []
+    assert payload["burned_area_contours"]["features"] == []
+    assert payload["summary"]["total_burn_area_ha"] == 0.0
+
+
 def test_offline_map_is_available_without_external_tiles():
     response = client.get("/map")
 

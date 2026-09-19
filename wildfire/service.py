@@ -117,6 +117,90 @@ def _overlaps(
     )
 
 
+def _point_in_ring(point: tuple[float, float], ring: tuple[tuple[float, float], ...]) -> bool:
+    x, y = point
+    inside = False
+    for left, right in zip(ring, (*ring[1:], ring[0]), strict=True):
+        x1, y1 = left
+        x2, y2 = right
+        crosses = (y1 > y) != (y2 > y)
+        if crosses:
+            intersection_x = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x < intersection_x:
+                inside = not inside
+    return inside
+
+
+def _orientation(
+    left: tuple[float, float],
+    middle: tuple[float, float],
+    right: tuple[float, float],
+) -> float:
+    return (middle[0] - left[0]) * (right[1] - left[1]) - (
+        middle[1] - left[1]
+    ) * (right[0] - left[0])
+
+
+def _on_segment(
+    left: tuple[float, float],
+    point: tuple[float, float],
+    right: tuple[float, float],
+) -> bool:
+    return (
+        min(left[0], right[0]) <= point[0] <= max(left[0], right[0])
+        and min(left[1], right[1]) <= point[1] <= max(left[1], right[1])
+    )
+
+
+def _segments_intersect(
+    first_left: tuple[float, float],
+    first_right: tuple[float, float],
+    second_left: tuple[float, float],
+    second_right: tuple[float, float],
+) -> bool:
+    epsilon = 1e-12
+    orientations = (
+        _orientation(first_left, first_right, second_left),
+        _orientation(first_left, first_right, second_right),
+        _orientation(second_left, second_right, first_left),
+        _orientation(second_left, second_right, first_right),
+    )
+    if (
+        ((orientations[0] > epsilon and orientations[1] < -epsilon) or (orientations[0] < -epsilon and orientations[1] > epsilon))
+        and ((orientations[2] > epsilon and orientations[3] < -epsilon) or (orientations[2] < -epsilon and orientations[3] > epsilon))
+    ):
+        return True
+    return any(
+        abs(orientation) <= epsilon and _on_segment(left, point, right)
+        for orientation, left, point, right in (
+            (orientations[0], first_left, second_left, first_right),
+            (orientations[1], first_left, second_right, first_right),
+            (orientations[2], second_left, first_left, second_right),
+            (orientations[3], second_left, first_right, second_right),
+        )
+    )
+
+
+def _geometry_intersects_ring(
+    feature: dict[str, Any],
+    ring: tuple[tuple[float, float], ...],
+) -> bool:
+    feature_points = tuple(_coordinate_pairs(feature["geometry"]))
+    if feature["geometry"].get("type") == "Point":
+        return _point_in_ring(feature_points[0], ring)
+    if any(_point_in_ring(point, ring) for point in feature_points):
+        return True
+    if any(_point_in_ring(point, feature_points) for point in ring):
+        return True
+    feature_edges = tuple(zip(feature_points, (*feature_points[1:], feature_points[0]), strict=True))
+    query_edges = tuple(zip(ring, (*ring[1:], ring[0]), strict=True))
+    return any(
+        _segments_intersect(first_left, first_right, second_left, second_right)
+        for first_left, first_right in feature_edges
+        for second_left, second_right in query_edges
+    )
+
+
 def _parse_feature_date(feature: dict[str, Any]) -> date | None:
     value = feature["properties"].get("acquired_at", feature["properties"].get("date"))
     if value in (None, ""):
@@ -141,16 +225,11 @@ def filter_results(
 ) -> list[dict[str, Any]]:
     if start_date is not None and end_date is not None and start_date > end_date:
         raise ValueError("start_date must be earlier than or equal to end_date")
-    polygon_bounds = None
-    if polygon:
-        xs, ys = zip(*polygon, strict=True)
-        polygon_bounds = (min(xs), min(ys), max(xs), max(ys))
-
     selected: list[dict[str, Any]] = []
     for feature in features:
         if bbox is not None and not _overlaps(_bounds(feature), bbox):
             continue
-        if polygon_bounds is not None and not _overlaps(_bounds(feature), polygon_bounds):
+        if polygon is not None and not _geometry_intersects_ring(feature, polygon):
             continue
         acquired = _parse_feature_date(feature)
         if start_date is not None and (acquired is None or acquired < start_date):
