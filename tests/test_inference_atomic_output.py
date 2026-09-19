@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -37,7 +36,12 @@ def _patch_minimal_run(monkeypatch, validation_errors):
 def test_default_model_config_is_anchored_to_entrypoint(tmp_path, monkeypatch):
     _patch_minimal_run(monkeypatch, [])
     seen = []
-    monkeypatch.setattr(inference, "load_model_config", lambda path: seen.append(Path(path)) or object())
+
+    def capture_config(path):
+        seen.append(path)
+        return object()
+
+    monkeypatch.setattr(inference, "load_model_config", capture_config)
     unrelated_cwd = tmp_path / "elsewhere"
     unrelated_cwd.mkdir()
     monkeypatch.chdir(unrelated_cwd)
