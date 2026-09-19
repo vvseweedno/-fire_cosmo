@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 
 import pytest
 
@@ -67,6 +67,25 @@ def test_observation_requires_timezone_aware_timestamp():
 
     with pytest.raises(ValueError, match="timezone-aware"):
         validate_observation(naive)
+
+
+def test_observation_rejects_timezone_without_utc_offset():
+    class MissingOffsetTimezone(tzinfo):
+        def utcoffset(self, dt):
+            return None
+
+        def dst(self, dt):
+            return None
+
+        def tzname(self, dt):
+            return "missing-offset"
+
+    invalid = _obs(
+        acquired_at=datetime(2026, 7, 1, 10, 0, tzinfo=MissingOffsetTimezone())
+    )
+
+    with pytest.raises(ValueError, match="valid UTC offset"):
+        validate_observation(invalid)
 
 
 @pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
