@@ -76,8 +76,8 @@ def validate_observation(observation: ObservationDescriptor) -> None:
 
     if not observation.observation_id.strip():
         raise ValueError("observation_id must not be empty")
-    if observation.acquired_at.tzinfo is None:
-        raise ValueError("acquired_at must be timezone-aware")
+    if observation.acquired_at.tzinfo is None or observation.acquired_at.utcoffset() is None:
+        raise ValueError("acquired_at must be timezone-aware with a valid UTC offset")
     if not observation.crs.strip():
         raise ValueError("crs must not be empty")
 
