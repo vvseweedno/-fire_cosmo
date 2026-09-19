@@ -60,6 +60,34 @@ def read_submission_template(path: str | Path) -> list[TemplateRow]:
     return rows
 
 
+def validate_template_task_contract(
+    template: Iterable[TemplateRow],
+    tasks: Mapping[str, str],
+) -> list[str]:
+    """Validate that every organiser template row agrees with ``meta.csv``.
+
+    The sample submission defines the exact row order, but it does not by
+    itself establish whether a chip is AF or BS.  Checking that relationship
+    *before* inference avoids spending a run on a template/meta mismatch and
+    avoids emitting a CSV that could only fail at scoring time.
+    """
+    errors: list[str] = []
+    for row in template:
+        raw_task = tasks.get(row.chip_id)
+        task = str(raw_task or "").upper()
+        if task not in {"AF", "BS"}:
+            errors.append(
+                f"{row.chip_id}: template row has no valid meta.csv task"
+            )
+            continue
+        allowed = AF_CLASS_IDS if task == "AF" else BS_CLASS_IDS
+        if row.class_id not in allowed:
+            errors.append(
+                f"{row.chip_id}: template class {row.class_id} is invalid for task {task}"
+            )
+    return errors
+
+
 def rows_for_prediction(prediction: Prediction) -> list[dict[str, str | int]]:
     task = prediction.task.upper()
     class_ids = AF_CLASS_IDS if task == "AF" else BS_CLASS_IDS if task == "BS" else ()
@@ -162,6 +190,8 @@ def validate_submission_against_template(
     errors: list[str] = []
     expected_rows = list(template)
     expected_pairs = {(row.chip_id, row.class_id) for row in expected_rows}
+    if tasks is not None:
+        errors.extend(validate_template_task_contract(expected_rows, tasks))
     if expected_row_count is not None and len(expected_rows) != expected_row_count:
         errors.append(
             f"template row count mismatch: expected official {expected_row_count}, "

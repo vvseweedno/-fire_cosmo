@@ -16,6 +16,7 @@ from wildfire.model_config import load_model_config
 from wildfire.submission import (
     Prediction,
     read_submission_template,
+    validate_template_task_contract,
     write_submission_from_template,
 )
 
@@ -31,6 +32,15 @@ def run(
 
     template = read_submission_template(template_path)
     meta = read_meta_csv(meta_path)
+    task_contract_errors = validate_template_task_contract(
+        template,
+        {chip_id: item.kind for chip_id, item in meta.items()},
+    )
+    if task_contract_errors:
+        raise RuntimeError(
+            "sample_submission.csv and meta.csv task contract failed: "
+            + "; ".join(task_contract_errors)
+        )
     config = load_model_config(model_config)
 
     discovered = {chip.chip_id: chip for chip in discover_chips(root)}

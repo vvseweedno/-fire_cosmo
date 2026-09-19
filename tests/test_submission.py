@@ -7,6 +7,7 @@ from wildfire.submission import (
     TemplateRow,
     read_submission_template,
     validate_submission_against_template,
+    validate_template_task_contract,
     write_submission,
     write_submission_from_template,
 )
@@ -91,6 +92,15 @@ def test_validator_rejects_class_mismatch_against_meta_task(tmp_path: Path):
         tasks={"af_001": "af"},
     )
     assert any("invalid for af_001 task AF" in error for error in errors)
+
+
+def test_template_task_contract_rejects_missing_meta_and_wrong_class():
+    errors = validate_template_task_contract(
+        [TemplateRow("af_001", 2), TemplateRow("unknown", 1)],
+        {"af_001": "af"},
+    )
+    assert any("af_001: template class 2" in error for error in errors)
+    assert any("unknown: template row has no valid" in error for error in errors)
 
 
 def test_validator_can_enforce_current_official_row_count(tmp_path: Path):

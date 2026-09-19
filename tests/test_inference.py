@@ -103,3 +103,19 @@ def test_inference_fails_loudly_with_chip_and_source_diagnostics(
 
     with pytest.raises(RuntimeError, match=r"af_001: inference failed.*I4\.npy"):
         run(tmp_path, tmp_path / "submission.csv")
+
+
+def test_inference_rejects_template_meta_task_mismatch_before_loading_rasters(
+    tmp_path: Path,
+):
+    (tmp_path / "meta.csv").write_text(
+        "chip_id,kind,width,height,gsd\naf_001,af,2,2,375\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sample_submission.csv").write_text(
+        'chip_id,class_id,rle\naf_001,2,""\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="task contract failed.*template class 2"):
+        run(tmp_path, tmp_path / "submission.csv")

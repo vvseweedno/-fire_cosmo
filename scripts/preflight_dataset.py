@@ -7,9 +7,12 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
+
+from wildfire.constants import AF_CLASS_IDS, BS_CLASS_IDS
 from wildfire.io import discover_chips, infer_task, load_channels
 from wildfire.metadata import read_meta_csv
-from wildfire.submission import read_submission_template
+from wildfire.submission import read_submission_template, validate_template_task_contract
 
 REQUIRED_CHANNELS = {
     "AF": {"I1", "I2", "I3", "I4", "I5"},
@@ -43,6 +46,20 @@ def run(
     warnings: list[str] = []
     task_counts: Counter[str] = Counter()
     optional_presence: Counter[str] = Counter()
+
+    if resolved_mode == "test":
+        errors.extend(
+            validate_template_task_contract(
+                template,
+                {chip_id: item.kind for chip_id, item in meta.items()},
+            )
+        )
+        untemplated = sorted(set(meta) - set(required_ids))
+        if untemplated:
+            errors.append(
+                "meta.csv contains chips absent from sample_submission.csv: "
+                + ", ".join(untemplated[:10])
+            )
 
     extra = sorted(set(chips) - set(required_ids))
     if extra:
@@ -101,6 +118,39 @@ def run(
             shape = next(iter(unique_shapes))
             if shape != item.shape:
                 errors.append(f"{chip_id}: raster shape={shape} but meta.csv shape={item.shape}")
+
+            for name, array in channels.items():
+                values = np.asarray(array)
+                if values.ndim != 2:
+                    errors.append(
+                        f"{chip_id}: channel {name} must be a 2-D raster, got {values.shape}"
+                    )
+                    continue
+                if not np.issubdtype(values.dtype, np.number):
+                    errors.append(
+                        f"{chip_id}: channel {name} has non-numeric dtype {values.dtype}"
+                    )
+                    continue
+                finite = np.isfinite(values)
+                if not np.any(finite):
+                    errors.append(f"{chip_id}: channel {name} contains no finite pixels")
+                    continue
+                missing = int(values.size - np.count_nonzero(finite))
+                if missing:
+                    warnings.append(
+                        f"{chip_id}: channel {name} has {missing}/{values.size} non-finite pixels"
+                    )
+
+                if name == "TARGET" and resolved_mode == "train":
+                    valid = values[finite]
+                    allowed = (0, *AF_CLASS_IDS) if expected == "AF" else (0, *BS_CLASS_IDS)
+                    integral = np.equal(valid, np.rint(valid))
+                    observed = set(np.unique(valid[integral].astype(np.int64)).tolist())
+                    if not np.all(integral) or not observed <= set(allowed):
+                        errors.append(
+                            f"{chip_id}: TARGET labels must be integer classes {list(allowed)}, "
+                            f"observed {sorted(observed)}"
+                        )
 
     return {
         "ok": not errors,

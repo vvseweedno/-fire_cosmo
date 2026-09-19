@@ -43,6 +43,10 @@ Private-test block geometry намеренно отсутствует и не р
 
 - единый canonical evaluator для рабочей composite metric;
 - strict template-driven RLE/submission;
+- explicit template ↔ `meta.csv` AF/BS class-contract check before inference,
+  during data preflight, and in final CSV validation;
+- deep preflight validates 2-D numeric rasters, reports non-finite pixels, and
+  rejects empty channels or out-of-contract training labels;
 - raw archive inspector, strict dataset preflight и dataset profiler;
 - metadata-safe split-band / multiband GeoTIFF / NPZ channel loading без угадывания порядка каналов;
 - exact AF threshold optimization;
