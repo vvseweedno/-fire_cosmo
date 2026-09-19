@@ -69,6 +69,17 @@ def test_observation_requires_timezone_aware_timestamp():
         validate_observation(naive)
 
 
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_observation_rejects_non_finite_bbox_coordinates(non_finite):
+    observation = _obs(
+        crs="EPSG:3857",
+        bbox=(0.0, 0.0, non_finite, 1.0),
+    )
+
+    with pytest.raises(ValueError, match="bbox coordinates must be finite"):
+        validate_observation(observation)
+
+
 def test_capabilities_separate_public_and_implemented_sensor_families():
     capabilities = operational_capabilities()
 
