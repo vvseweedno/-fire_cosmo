@@ -20,6 +20,8 @@ _PUBLIC_AF_SENSORS = ("MODIS", "VIIRS", "LANDSAT")
 _PUBLIC_BS_SENSORS = ("SENTINEL-2",)
 _IMPLEMENTED_AF_SENSORS = ("VIIRS",)
 _IMPLEMENTED_BS_SENSORS = ("SENTINEL-2",)
+_VIIRS_REQUIRED_CHANNELS = frozenset({"I4", "I5"})
+_SENTINEL2_REQUIRED_CHANNELS = frozenset({"B8A", "B12"})
 
 
 def _normalise_sensor(value: str) -> str:
@@ -103,12 +105,12 @@ def operational_capabilities() -> dict[str, object]:
         "active_fire": {
             "public_sensor_families": list(_PUBLIC_AF_SENSORS),
             "implemented_inference_adapters": list(_IMPLEMENTED_AF_SENSORS),
-            "implemented_viirs_minimum_channels": ["I1", "I2", "I3", "I4", "I5"],
+            "implemented_viirs_minimum_channels": sorted(_VIIRS_REQUIRED_CHANNELS),
         },
         "burn_assessment": {
             "public_sensor_families": list(_PUBLIC_BS_SENSORS),
             "implemented_inference_adapters": list(_IMPLEMENTED_BS_SENSORS),
-            "implemented_sentinel2_minimum_channels": ["B8A", "B12"],
+            "implemented_sentinel2_minimum_channels": sorted(_SENTINEL2_REQUIRED_CHANNELS),
             "pairing": "explicit temporally ordered pre/post observations",
         },
     }
@@ -135,11 +137,11 @@ def observation_readiness(
     if resolved_stage == "AF":
         public = sensor in _PUBLIC_AF_SENSORS
         implemented = sensor in _IMPLEMENTED_AF_SENSORS
-        required = {"I4", "I5"} if sensor == "VIIRS" else set()
+        required = _VIIRS_REQUIRED_CHANNELS if sensor == "VIIRS" else frozenset()
     else:
         public = sensor in _PUBLIC_BS_SENSORS
         implemented = sensor in _IMPLEMENTED_BS_SENSORS
-        required = {"B8A", "B12"} if sensor == "SENTINEL-2" else set()
+        required = _SENTINEL2_REQUIRED_CHANNELS if sensor == "SENTINEL-2" else frozenset()
 
     missing = sorted(required - channels)
     ready = bool(public and implemented and not missing)
