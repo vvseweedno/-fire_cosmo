@@ -7,6 +7,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import tempfile
 from pathlib import Path
 
 from wildfire.baselines import predict
@@ -28,6 +30,7 @@ def run(
     model_config: str | Path = "configs/baseline.json",
 ) -> int:
     root = Path(data_dir)
+    output_path = Path(output)
     template_path = root / "sample_submission.csv"
     meta_path = root / "meta.csv"
 
@@ -75,26 +78,35 @@ def run(
             )
         predictions[chip_id] = Prediction(chip_id=chip_id, task=task, mask=mask)
 
-    rows = write_submission_from_template(predictions, template, output)
-    if rows != len(template):
-        raise RuntimeError(f"Expected {len(template)} submission rows, wrote {rows}")
-
-    # Never report a successful inference run unless the exact artifact written
-    # to disk can pass the same strict contract used by the submission checker.
-    # This catches RLE/canonicalisation, ordering, overlap and shape regressions
-    # at the competition entry point rather than at upload/scoring time.
-    submission_errors = validate_submission_against_template(
-        output,
-        template,
-        {chip_id: meta[chip_id].shape for chip_id in required_chip_ids},
-        tasks={chip_id: meta[chip_id].kind for chip_id in required_chip_ids},
-        expected_row_count=len(template),
+    # Stage the candidate beside the requested destination.  Validation happens
+    # before os.replace(), so a failed run can never clobber a previously valid
+    # submission and successful publication is atomic on the destination FS.
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, staged_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.", suffix=".tmp", dir=output_path.parent
     )
-    if submission_errors:
-        raise RuntimeError(
-            "generated submission failed strict validation: "
-            + "; ".join(submission_errors)
+    os.close(fd)
+    staged_path = Path(staged_name)
+    try:
+        rows = write_submission_from_template(predictions, template, staged_path)
+        if rows != len(template):
+            raise RuntimeError(f"Expected {len(template)} submission rows, wrote {rows}")
+
+        submission_errors = validate_submission_against_template(
+            staged_path,
+            template,
+            {chip_id: meta[chip_id].shape for chip_id in required_chip_ids},
+            tasks={chip_id: meta[chip_id].kind for chip_id in required_chip_ids},
+            expected_row_count=len(template),
         )
+        if submission_errors:
+            raise RuntimeError(
+                "generated submission failed strict validation: "
+                + "; ".join(submission_errors)
+            )
+        os.replace(staged_path, output_path)
+    finally:
+        staged_path.unlink(missing_ok=True)
     return rows
 
 
