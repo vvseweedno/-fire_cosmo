@@ -25,7 +25,7 @@ _SENTINEL2_REQUIRED_CHANNELS = frozenset({"B8A", "B12"})
 
 
 def _normalise_sensor(value: str) -> str:
-    token = value.strip().upper().replace("_", "-").replace(" ", "-")
+    token = "-".join(value.strip().upper().replace("_", " ").replace("-", " ").split())
     aliases = {
         "S2": "SENTINEL-2",
         "SENTINEL2": "SENTINEL-2",
