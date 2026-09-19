@@ -7,6 +7,7 @@ from wildfire.submission import (
     TemplateRow,
     read_submission_template,
     validate_submission_against_template,
+    validate_template_task_contract,
     write_submission,
     write_submission_from_template,
 )
@@ -60,3 +61,55 @@ def test_validator_rejects_unquoted_rle(tmp_path: Path):
         {"af_001": (2, 2)},
     )
     assert any("quoted RLE" in error for error in errors)
+
+
+def test_validator_requires_template_order_and_canonical_rle(tmp_path: Path):
+    output = tmp_path / "bad.csv"
+    output.write_text(
+        'chip_id,class_id,rle\n'
+        'bs_001,1," 1 1 "\n'
+        'af_001,1,""\n',
+        encoding="utf-8",
+    )
+    template = [TemplateRow("af_001", 1), TemplateRow("bs_001", 1)]
+    errors = validate_submission_against_template(
+        output,
+        template,
+        {"af_001": (2, 2), "bs_001": (2, 2)},
+        tasks={"af_001": "af", "bs_001": "bs"},
+    )
+    assert any("row order mismatch" in error for error in errors)
+    assert any("non-canonical RLE" in error for error in errors)
+
+
+def test_validator_rejects_class_mismatch_against_meta_task(tmp_path: Path):
+    output = tmp_path / "bad.csv"
+    output.write_text('chip_id,class_id,rle\naf_001,2,""\n', encoding="utf-8")
+    errors = validate_submission_against_template(
+        output,
+        [TemplateRow("af_001", 2)],
+        {"af_001": (2, 2)},
+        tasks={"af_001": "af"},
+    )
+    assert any("invalid for af_001 task AF" in error for error in errors)
+
+
+def test_template_task_contract_rejects_missing_meta_and_wrong_class():
+    errors = validate_template_task_contract(
+        [TemplateRow("af_001", 2), TemplateRow("unknown", 1)],
+        {"af_001": "af"},
+    )
+    assert any("af_001: template class 2" in error for error in errors)
+    assert any("unknown: template row has no valid" in error for error in errors)
+
+
+def test_validator_can_enforce_current_official_row_count(tmp_path: Path):
+    output = tmp_path / "submission.csv"
+    output.write_text('chip_id,class_id,rle\naf_001,1,""\n', encoding="utf-8")
+    errors = validate_submission_against_template(
+        output,
+        [TemplateRow("af_001", 1)],
+        {"af_001": (2, 2)},
+        expected_row_count=447,
+    )
+    assert any("official 447" in error for error in errors)

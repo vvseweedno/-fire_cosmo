@@ -1,0 +1,328 @@
+"""Offline result catalog and spatial-temporal service helpers."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+DEFAULT_RESULTS_PATH = Path(__file__).resolve().parents[1] / "service" / "demo_results.geojson"
+
+
+def results_path() -> Path:
+    return Path(os.getenv("WILDFIRE_RESULTS_GEOJSON", str(DEFAULT_RESULTS_PATH)))
+
+
+def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
+    source = Path(path) if path is not None else results_path()
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("type") != "FeatureCollection":
+        raise ValueError("results catalog must be a GeoJSON FeatureCollection")
+    raw_features = payload.get("features")
+    if not isinstance(raw_features, list):
+        raise ValueError("results catalog features must be a list")
+
+    features: list[dict[str, Any]] = []
+    for index, feature in enumerate(raw_features):
+        if not isinstance(feature, dict) or feature.get("type") != "Feature":
+            raise ValueError(f"results feature {index} must be a GeoJSON Feature")
+        geometry = feature.get("geometry")
+        properties = feature.get("properties")
+        if not isinstance(geometry, dict) or geometry.get("type") not in {"Point", "Polygon"}:
+            raise ValueError(f"results feature {index} must be a Point or Polygon")
+        if not isinstance(properties, dict):
+            raise ValueError(f"results feature {index} properties must be an object")
+        feature_id = str(feature.get("id") or f"feature-{index}")
+        features.append(
+            {
+                "type": "Feature",
+                "id": feature_id,
+                "geometry": geometry,
+                "properties": properties,
+            }
+        )
+    return features
+
+
+def parse_bbox(value: str | None) -> tuple[float, float, float, float] | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        parts = tuple(float(item.strip()) for item in value.split(","))
+    except ValueError as exc:
+        raise ValueError("bbox must be min_x,min_y,max_x,max_y") from exc
+    if len(parts) != 4:
+        raise ValueError("bbox must contain four coordinates")
+    min_x, min_y, max_x, max_y = parts
+    if not all(math.isfinite(item) for item in parts) or not (min_x < max_x and min_y < max_y):
+        raise ValueError("bbox must satisfy finite min_x < max_x and min_y < max_y")
+    return parts
+
+
+def normalize_polygon(polygon: list[list[float]] | None) -> tuple[tuple[float, float], ...] | None:
+    if polygon is None:
+        return None
+    if len(polygon) < 4:
+        raise ValueError("polygon must contain at least four positions")
+    ring: list[tuple[float, float]] = []
+    for position in polygon:
+        if len(position) < 2:
+            raise ValueError("polygon positions must contain x and y")
+        x, y = float(position[0]), float(position[1])
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError("polygon positions must be finite")
+        ring.append((x, y))
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    return tuple(ring)
+
+
+def _coordinate_pairs(geometry: dict[str, Any]) -> list[tuple[float, float]]:
+    coordinates = geometry.get("coordinates")
+    if geometry.get("type") == "Point":
+        if not isinstance(coordinates, list) or len(coordinates) < 2:
+            raise ValueError("Point geometry must contain x and y")
+        return [(float(coordinates[0]), float(coordinates[1]))]
+    if geometry.get("type") == "Polygon":
+        if not isinstance(coordinates, list) or not coordinates:
+            raise ValueError("Polygon geometry must contain coordinates")
+        return [
+            (float(position[0]), float(position[1]))
+            for position in coordinates[0]
+            if isinstance(position, list) and len(position) >= 2
+        ]
+    raise ValueError("unsupported result geometry")
+
+
+def _bounds(feature: dict[str, Any]) -> tuple[float, float, float, float]:
+    pairs = _coordinate_pairs(feature["geometry"])
+    if not pairs:
+        raise ValueError(f"feature {feature.get('id')} has empty geometry")
+    xs, ys = zip(*pairs, strict=True)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _overlaps(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> bool:
+    return not (
+        left[2] < right[0]
+        or right[2] < left[0]
+        or left[3] < right[1]
+        or right[3] < left[1]
+    )
+
+
+def _point_in_ring(point: tuple[float, float], ring: tuple[tuple[float, float], ...]) -> bool:
+    x, y = point
+    inside = False
+    for left, right in zip(ring, (*ring[1:], ring[0]), strict=True):
+        x1, y1 = left
+        x2, y2 = right
+        crosses = (y1 > y) != (y2 > y)
+        if crosses:
+            intersection_x = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x < intersection_x:
+                inside = not inside
+    return inside
+
+
+def _orientation(
+    left: tuple[float, float],
+    middle: tuple[float, float],
+    right: tuple[float, float],
+) -> float:
+    return (middle[0] - left[0]) * (right[1] - left[1]) - (
+        middle[1] - left[1]
+    ) * (right[0] - left[0])
+
+
+def _on_segment(
+    left: tuple[float, float],
+    point: tuple[float, float],
+    right: tuple[float, float],
+) -> bool:
+    return (
+        min(left[0], right[0]) <= point[0] <= max(left[0], right[0])
+        and min(left[1], right[1]) <= point[1] <= max(left[1], right[1])
+    )
+
+
+def _segments_intersect(
+    first_left: tuple[float, float],
+    first_right: tuple[float, float],
+    second_left: tuple[float, float],
+    second_right: tuple[float, float],
+) -> bool:
+    epsilon = 1e-12
+    orientations = (
+        _orientation(first_left, first_right, second_left),
+        _orientation(first_left, first_right, second_right),
+        _orientation(second_left, second_right, first_left),
+        _orientation(second_left, second_right, first_right),
+    )
+    if (
+        ((orientations[0] > epsilon and orientations[1] < -epsilon) or (orientations[0] < -epsilon and orientations[1] > epsilon))
+        and ((orientations[2] > epsilon and orientations[3] < -epsilon) or (orientations[2] < -epsilon and orientations[3] > epsilon))
+    ):
+        return True
+    return any(
+        abs(orientation) <= epsilon and _on_segment(left, point, right)
+        for orientation, left, point, right in (
+            (orientations[0], first_left, second_left, first_right),
+            (orientations[1], first_left, second_right, first_right),
+            (orientations[2], second_left, first_left, second_right),
+            (orientations[3], second_left, first_right, second_right),
+        )
+    )
+
+
+def _geometry_intersects_ring(
+    feature: dict[str, Any],
+    ring: tuple[tuple[float, float], ...],
+) -> bool:
+    feature_points = tuple(_coordinate_pairs(feature["geometry"]))
+    if feature["geometry"].get("type") == "Point":
+        return _point_in_ring(feature_points[0], ring)
+    if any(_point_in_ring(point, ring) for point in feature_points):
+        return True
+    if any(_point_in_ring(point, feature_points) for point in ring):
+        return True
+    feature_edges = tuple(zip(feature_points, (*feature_points[1:], feature_points[0]), strict=True))
+    query_edges = tuple(zip(ring, (*ring[1:], ring[0]), strict=True))
+    return any(
+        _segments_intersect(first_left, first_right, second_left, second_right)
+        for first_left, first_right in feature_edges
+        for second_left, second_right in query_edges
+    )
+
+
+def _parse_feature_date(feature: dict[str, Any]) -> date | None:
+    value = feature["properties"].get("acquired_at", feature["properties"].get("date"))
+    if value in (None, ""):
+        return None
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(f"feature {feature.get('id')} has invalid acquired_at/date") from exc
+
+
+def filter_results(
+    features: list[dict[str, Any]],
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    polygon: tuple[tuple[float, float], ...] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict[str, Any]]:
+    if start_date is not None and end_date is not None and start_date > end_date:
+        raise ValueError("start_date must be earlier than or equal to end_date")
+    selected: list[dict[str, Any]] = []
+    for feature in features:
+        if bbox is not None and not _overlaps(_bounds(feature), bbox):
+            continue
+        if polygon is not None and not _geometry_intersects_ring(feature, polygon):
+            continue
+        acquired = _parse_feature_date(feature)
+        if start_date is not None and (acquired is None or acquired < start_date):
+            continue
+        if end_date is not None and (acquired is None or acquired > end_date):
+            continue
+        selected.append(feature)
+    return selected
+
+
+def _area_ha(feature: dict[str, Any]) -> float:
+    properties = feature["properties"]
+    raw_area = properties.get("area_ha")
+    if raw_area is None:
+        raise ValueError(
+            f"feature {feature.get('id')} has no area_ha; supply area from a projected raster"
+        )
+    area = float(raw_area)
+    if not math.isfinite(area) or area < 0:
+        raise ValueError(f"feature {feature.get('id')} has invalid area_ha")
+
+    pixel_count = properties.get("pixel_count")
+    pixel_area_m2 = properties.get("pixel_area_m2")
+    if pixel_count is not None and pixel_area_m2 is not None:
+        expected = float(pixel_count) * float(pixel_area_m2) / 10_000.0
+        if not math.isclose(area, expected, rel_tol=1e-6, abs_tol=1e-9):
+            raise ValueError(f"feature {feature.get('id')} area_ha disagrees with pixel geometry metadata")
+    return area
+
+
+def analytical_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
+    contours = [
+        feature
+        for feature in features
+        if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}
+    ]
+    area_by_severity = {str(class_id): 0.0 for class_id in (1, 2, 3)}
+    for feature in contours:
+        severity = int(feature["properties"].get("severity_class", 0))
+        if severity not in (1, 2, 3):
+            raise ValueError(f"feature {feature.get('id')} has invalid severity_class")
+        area_by_severity[str(severity)] += _area_ha(feature)
+    total = sum(area_by_severity.values())
+    return {
+        "feature_count": len(features),
+        "active_fire_count": sum(
+            feature["properties"].get("kind") in {"active_fire", "af"}
+            for feature in features
+        ),
+        "burned_area_contour_count": len(contours),
+        "total_burn_area_ha": total,
+        "area_by_severity_ha": area_by_severity,
+        "area_source": "projected-raster pixel metadata carried by each contour",
+    }
+
+
+def feature_collection(features: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"type": "FeatureCollection", "features": features}
+
+
+def query_results(
+    features: list[dict[str, Any]],
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    polygon: tuple[tuple[float, float], ...] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    selected = filter_results(
+        features,
+        bbox=bbox,
+        polygon=polygon,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    active = [
+        feature
+        for feature in selected
+        if feature["properties"].get("kind") in {"active_fire", "af"}
+    ]
+    burned = [
+        feature
+        for feature in selected
+        if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}
+    ]
+    return {
+        "query": {
+            "bbox": bbox,
+            "polygon": polygon,
+            "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
+        },
+        "active_fire_points": feature_collection(active),
+        "burned_area_contours": feature_collection(burned),
+        "summary": analytical_summary(selected),
+    }

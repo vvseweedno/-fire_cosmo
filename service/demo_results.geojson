@@ -1,0 +1,74 @@
+{
+  "type": "FeatureCollection",
+  "name": "cosmohack-demo-results",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "demo-af-001",
+      "properties": {
+        "kind": "active_fire",
+        "sensor": "VIIRS",
+        "acquired_at": "2026-07-01T10:15:00Z",
+        "confidence": 0.91,
+        "source": "synthetic offline demo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [37.62, 55.75]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-burn-001",
+      "properties": {
+        "kind": "burned_area",
+        "sensor": "Sentinel-2",
+        "acquired_at": "2026-07-02T09:00:00Z",
+        "severity_class": 2,
+        "area_ha": 1.0,
+        "pixel_count": 25,
+        "pixel_area_m2": 400.0,
+        "crs": "EPSG:32637",
+        "source": "synthetic offline demo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[37.60, 55.73], [37.64, 55.73], [37.64, 55.77], [37.60, 55.77], [37.60, 55.73]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-af-002",
+      "properties": {
+        "kind": "active_fire",
+        "sensor": "VIIRS",
+        "acquired_at": "2026-07-03T11:30:00Z",
+        "confidence": 0.84,
+        "source": "synthetic offline demo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [37.68, 55.79]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-burn-002",
+      "properties": {
+        "kind": "burned_area",
+        "sensor": "Sentinel-2",
+        "acquired_at": "2026-07-03T12:00:00Z",
+        "severity_class": 3,
+        "area_ha": 0.4,
+        "pixel_count": 10,
+        "pixel_area_m2": 400.0,
+        "crs": "EPSG:32637",
+        "source": "synthetic offline demo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[37.66, 55.77], [37.70, 55.77], [37.70, 55.81], [37.66, 55.81], [37.66, 55.77]]]
+      }
+    }
+  ]
+}

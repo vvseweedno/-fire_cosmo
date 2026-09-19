@@ -64,15 +64,15 @@ BS:
 
 | ID | Изменение | F1 AF | IoU burn | mIoU sev | Score | Latency | Решение |
 |---|---|---:|---:|---:|---:|---:|---|
-| B0 | deterministic baseline | TBD | TBD | TBD | TBD | TBD | baseline |
-| A1 | AF without land-cover prior | TBD | — | — | — | TBD | TBD |
-| A2 | AF I4/I5 + spatial context | TBD | — | — | — | TBD | TBD |
-| A3 | AF threshold calibration | TBD | — | — | — | TBD | TBD |
-| B1 | global dNBR thresholds | — | TBD | TBD | — | TBD | TBD |
-| B2 | land-cover-aware thresholds | — | TBD | TBD | — | TBD | TBD |
-| B3 | + Sentinel-1 support | — | TBD | TBD | — | TBD | TBD |
-| B4 | + terrain context | — | TBD | TBD | — | TBD | TBD |
-| M1 | compact segmentation model | TBD | TBD | TBD | TBD | TBD | TBD |
+| B0 | deterministic baseline | PENDING | PENDING | PENDING | PENDING | PENDING | baseline candidate |
+| A1 | AF without land-cover prior | PENDING | — | — | PENDING | PENDING | pending labelled train |
+| A2 | AF I4/I5 + spatial context | PENDING | — | — | PENDING | PENDING | pending labelled train |
+| A3 | AF threshold calibration | PENDING | — | — | PENDING | PENDING | pending labelled train |
+| B1 | global dNBR thresholds | — | PENDING | PENDING | PENDING | PENDING | pending labelled train |
+| B2 | land-cover-aware thresholds | — | PENDING | PENDING | PENDING | PENDING | pending labelled train |
+| B3 | + Sentinel-1 support | — | PENDING | PENDING | PENDING | PENDING | pending labelled train |
+| B4 | + terrain context | — | PENDING | PENDING | PENDING | PENDING | pending labelled train |
+| M1 | compact segmentation model | PENDING | PENDING | PENDING | PENDING | PENDING | hypothesis only |
 
 ## ML direction после baseline
 
