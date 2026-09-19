@@ -52,6 +52,7 @@ def test_api_spec_exposes_public_two_stage_contract():
     assert "active burning" in payload["public_task"]["stage_1"]
     assert "Sentinel-2" in payload["public_task"]["stage_2"]
     assert payload["aoi_endpoint"] == "/api/aoi"
+    assert payload["readiness_endpoint"] == "/api/readiness"
     assert "working_score_formula" in payload
 
 
@@ -97,3 +98,30 @@ def test_api_models_never_claims_unverified_accuracy():
         "implemented_inference_adapters"
     ] == ["VIIRS"]
     assert "MODIS" in payload["capabilities"]["active_fire"]["public_sensor_families"]
+
+
+def test_api_readiness_reports_real_blockers_without_aoi(monkeypatch):
+    monkeypatch.delenv("WILDFIRE_AOI_GEOJSON", raising=False)
+
+    response = client.get("/api/readiness")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "PARTIAL"
+    assert payload["checks"]["service"]["ready"] is True
+    assert payload["checks"]["aoi"]["ready"] is False
+    assert payload["checks"]["organizer_labelled_metrics"]["ready"] is False
+    assert set(payload["blockers"]) == {"aoi", "organizer_labelled_metrics"}
+
+
+def test_api_readiness_accepts_valid_explicit_aoi(tmp_path: Path, monkeypatch):
+    path = tmp_path / "aoi.geojson"
+    _write_aoi(path)
+    monkeypatch.setenv("WILDFIRE_AOI_GEOJSON", str(path))
+
+    response = client.get("/api/readiness")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["checks"]["aoi"]["ready"] is True
+    assert payload["blockers"] == ["organizer_labelled_metrics"]
