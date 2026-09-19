@@ -176,11 +176,13 @@ def test_build_burn_pair_rejects_same_observation_id():
 
 def test_build_burn_pair_rejects_reversed_time():
     pre = _obs(
+        observation_id="pre",
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
         acquired_at=datetime(2026, 8, 1, tzinfo=UTC),
     )
     post = _obs(
+        observation_id="post",
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
         acquired_at=datetime(2026, 7, 1, tzinfo=UTC),
@@ -192,11 +194,13 @@ def test_build_burn_pair_rejects_reversed_time():
 
 def test_build_burn_pair_rejects_non_coregistered_bbox():
     pre = _obs(
+        observation_id="pre",
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
         acquired_at=datetime(2026, 6, 1, tzinfo=UTC),
     )
     post = _obs(
+        observation_id="post",
         sensor="Sentinel-2",
         channels=("B8A", "B12"),
         acquired_at=datetime(2026, 7, 1, tzinfo=UTC),
