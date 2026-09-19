@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -31,6 +32,21 @@ def _patch_minimal_run(monkeypatch, validation_errors):
         "validate_submission_against_template",
         lambda *_args, **_kwargs: validation_errors,
     )
+
+
+def test_default_model_config_is_anchored_to_entrypoint(tmp_path, monkeypatch):
+    _patch_minimal_run(monkeypatch, [])
+    seen = []
+    monkeypatch.setattr(inference, "load_model_config", lambda path: seen.append(Path(path)) or object())
+    unrelated_cwd = tmp_path / "elsewhere"
+    unrelated_cwd.mkdir()
+    monkeypatch.chdir(unrelated_cwd)
+
+    inference.run(tmp_path, tmp_path / "submission.csv")
+
+    assert seen == [inference.DEFAULT_MODEL_CONFIG]
+    assert inference.DEFAULT_MODEL_CONFIG.is_absolute()
+    assert inference.DEFAULT_MODEL_CONFIG.name == "baseline.json"
 
 
 def test_duplicate_discovered_chip_ids_fail_closed(tmp_path, monkeypatch):
