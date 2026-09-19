@@ -33,6 +33,25 @@ def _patch_minimal_run(monkeypatch, validation_errors):
     )
 
 
+def test_duplicate_discovered_chip_ids_fail_closed(tmp_path, monkeypatch):
+    _patch_minimal_run(monkeypatch, [])
+    duplicate_a = SimpleNamespace(chip_id="AF_001", channels={})
+    duplicate_b = SimpleNamespace(chip_id="AF_001", channels={})
+    monkeypatch.setattr(
+        inference, "discover_chips", lambda _: [duplicate_a, duplicate_b]
+    )
+    monkeypatch.setattr(
+        inference,
+        "load_channels",
+        lambda _: pytest.fail("ambiguous chip must not reach inference"),
+    )
+
+    with pytest.raises(RuntimeError, match="duplicate chip IDs: AF_001"):
+        inference.run(tmp_path, tmp_path / "submission.csv")
+
+    assert not (tmp_path / "submission.csv").exists()
+
+
 def test_failed_validation_preserves_existing_submission(tmp_path, monkeypatch):
     _patch_minimal_run(monkeypatch, ["bad rle"])
     output = tmp_path / "submission.csv"
