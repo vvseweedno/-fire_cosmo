@@ -8,6 +8,7 @@ sensor named in the public case is already supported end-to-end.
 
 from __future__ import annotations  # noqa: I001
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -81,6 +82,8 @@ def validate_observation(observation: ObservationDescriptor) -> None:
         raise ValueError("crs must not be empty")
 
     min_x, min_y, max_x, max_y = observation.bbox
+    if not all(math.isfinite(value) for value in observation.bbox):
+        raise ValueError("bbox coordinates must be finite")
     if not (min_x < max_x and min_y < max_y):
         raise ValueError("bbox must satisfy min_x < max_x and min_y < max_y")
 
