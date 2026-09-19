@@ -47,7 +47,20 @@ def run(
         )
     config = load_model_config(model_config)
 
-    discovered = {chip.chip_id: chip for chip in discover_chips(root)}
+    discovered = {}
+    duplicate_chip_ids: set[str] = set()
+    for chip in discover_chips(root):
+        if chip.chip_id in discovered:
+            duplicate_chip_ids.add(chip.chip_id)
+        else:
+            discovered[chip.chip_id] = chip
+    if duplicate_chip_ids:
+        duplicates = ", ".join(sorted(duplicate_chip_ids))
+        raise RuntimeError(
+            "dataset discovery produced duplicate chip IDs: "
+            f"{duplicates}. Refusing ambiguous input mapping."
+        )
+
     required_chip_ids = list(dict.fromkeys(row.chip_id for row in template))
 
     predictions: dict[str, Prediction] = {}
