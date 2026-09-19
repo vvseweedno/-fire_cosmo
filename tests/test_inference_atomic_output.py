@@ -33,6 +33,24 @@ def _patch_minimal_run(monkeypatch, validation_errors):
     )
 
 
+def test_default_model_config_is_independent_of_cwd(tmp_path, monkeypatch):
+    _patch_minimal_run(monkeypatch, [])
+    loaded_configs = []
+    monkeypatch.setattr(
+        inference,
+        "load_model_config",
+        lambda path: loaded_configs.append(path) or object(),
+    )
+    foreign_cwd = tmp_path / "foreign-cwd"
+    foreign_cwd.mkdir()
+    monkeypatch.chdir(foreign_cwd)
+
+    inference.run(tmp_path, tmp_path / "submission.csv")
+
+    assert loaded_configs == [inference.DEFAULT_MODEL_CONFIG]
+    assert inference.DEFAULT_MODEL_CONFIG.is_absolute()
+
+
 def test_duplicate_discovered_chip_ids_fail_closed(tmp_path, monkeypatch):
     _patch_minimal_run(monkeypatch, [])
     duplicate_a = SimpleNamespace(chip_id="AF_001", channels={})
