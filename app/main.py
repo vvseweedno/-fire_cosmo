@@ -12,7 +12,7 @@ from wildfire.operational import operational_capabilities
 
 app = FastAPI(
     title="Wildfire Monitoring — КосмоХакатон 2026",
-    version="0.2.0",
+    version="0.3.0",
     description=(
         "Two-stage near-real-time remote-sensing service: active-fire detection "
         "followed by burned-area/severity assessment."
@@ -22,7 +22,7 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "wildfire-monitoring", "version": "0.2.0"}
+    return {"status": "ok", "service": "wildfire-monitoring", "version": app.version}
 
 
 @app.get("/api/spec")
@@ -68,6 +68,7 @@ def spec() -> dict:
             "to release evidence before calling it publicly verified"
         ),
         "aoi_endpoint": "/api/aoi",
+        "readiness_endpoint": "/api/readiness",
         "labelled_inference_command": (
             "python inference.py --data-dir /path/to/test --output submission.csv"
         ),
@@ -91,6 +92,47 @@ def models() -> dict[str, object]:
             "status": "UNVERIFIED_ON_ORGANIZER_LABELS",
             "metrics": None,
         },
+    }
+
+
+@app.get("/api/readiness")
+def readiness() -> dict[str, object]:
+    """Expose machine-readable demo/release readiness without inventing evidence."""
+
+    aoi_path = os.getenv("WILDFIRE_AOI_GEOJSON")
+    aoi_ready = False
+    aoi_error: str | None = None
+    if aoi_path:
+        try:
+            load_monitoring_aoi(aoi_path)
+            aoi_ready = True
+        except (OSError, ValueError) as exc:
+            aoi_error = str(exc)
+
+    checks = {
+        "service": {"ready": True, "detail": "API process is serving requests"},
+        "aoi": {
+            "ready": aoi_ready,
+            "detail": (
+                "configured organizer/public AOI parsed successfully"
+                if aoi_ready
+                else "set WILDFIRE_AOI_GEOJSON to a valid organizer/public GeoJSON"
+            ),
+        },
+        "organizer_labelled_metrics": {
+            "ready": False,
+            "detail": "not verified: no organizer-labelled metrics are bundled or claimed",
+        },
+    }
+    if aoi_error:
+        checks["aoi"]["error"] = aoi_error
+
+    blockers = [name for name, check in checks.items() if not check["ready"]]
+    return {
+        "status": "READY_FOR_DEMO" if not blockers else "PARTIAL",
+        "service_version": app.version,
+        "checks": checks,
+        "blockers": blockers,
     }
 
 
@@ -158,5 +200,5 @@ strong{color:#58a6ff}.ok{color:#3fb950}.warn{color:#d29922}
 вычислить площадь пикселя.</p>
 <p class="warn">Private-test координаты, даты и скрытые границы не реконструируются.</p>
 </div>
-<p class="muted">API: /health · /api/spec · /api/models · /api/aoi</p>
+<p class="muted">API: /health · /api/spec · /api/models · /api/aoi · /api/readiness</p>
 </main></body></html>"""
