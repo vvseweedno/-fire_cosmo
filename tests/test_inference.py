@@ -119,3 +119,32 @@ def test_inference_rejects_template_meta_task_mismatch_before_loading_rasters(
 
     with pytest.raises(RuntimeError, match="task contract failed.*template class 2"):
         run(tmp_path, tmp_path / "submission.csv")
+
+
+def test_inference_rejects_generated_artifact_that_fails_strict_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    shape = (2, 2)
+    _write_stack(
+        tmp_path / "af_001.tif",
+        [np.full(shape, 300.0, dtype=np.float32), np.full(shape, 295.0, dtype=np.float32)],
+        ["I4", "I5"],
+    )
+    (tmp_path / "meta.csv").write_text(
+        "chip_id,kind,width,height,gsd\naf_001,af,2,2,375\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sample_submission.csv").write_text(
+        'chip_id,class_id,rle\naf_001,1,""\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        inference_module,
+        "validate_submission_against_template",
+        lambda *_args, **_kwargs: ["synthetic validator failure"],
+    )
+
+    with pytest.raises(RuntimeError, match="strict validation.*synthetic validator failure"):
+        run(tmp_path, tmp_path / "submission.csv")
