@@ -19,6 +19,7 @@ def _obs(
     acquired_at: datetime | None = None,
     crs: str = "EPSG:4326",
     bbox: tuple[float, float, float, float] = (38.0, 45.0, 39.0, 46.0),
+    source: str = "test",
 ) -> ObservationDescriptor:
     return ObservationDescriptor(
         observation_id=observation_id,
@@ -27,7 +28,7 @@ def _obs(
         crs=crs,
         bbox=bbox,
         channels=channels,
-        source="test",
+        source=source,
     )
 
 
@@ -60,6 +61,13 @@ def test_viirs_missing_i5_is_not_inference_ready():
 
     assert readiness["missing_required_channels"] == ["I5"]
     assert readiness["ready"] is False
+
+
+def test_observation_requires_explicit_source_provenance():
+    observation = _obs(source="   ")
+
+    with pytest.raises(ValueError, match="provenance is required"):
+        validate_observation(observation)
 
 
 def test_observation_requires_timezone_aware_timestamp():
