@@ -80,6 +80,8 @@ def validate_observation(observation: ObservationDescriptor) -> None:
         raise ValueError("observation_id must not be empty")
     if not observation.source.strip():
         raise ValueError("source must not be empty; observation provenance is required")
+    if not observation.sensor_family.strip():
+        raise ValueError("sensor_family must not be empty; sensor provenance is required")
     if observation.acquired_at.tzinfo is None or observation.acquired_at.utcoffset() is None:
         raise ValueError("acquired_at must be timezone-aware with a valid UTC offset")
     if not observation.crs.strip():
