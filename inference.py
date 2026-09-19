@@ -16,6 +16,7 @@ from wildfire.model_config import load_model_config
 from wildfire.submission import (
     Prediction,
     read_submission_template,
+    validate_submission_against_template,
     validate_template_task_contract,
     write_submission_from_template,
 )
@@ -77,6 +78,23 @@ def run(
     rows = write_submission_from_template(predictions, template, output)
     if rows != len(template):
         raise RuntimeError(f"Expected {len(template)} submission rows, wrote {rows}")
+
+    # Never report a successful inference run unless the exact artifact written
+    # to disk can pass the same strict contract used by the submission checker.
+    # This catches RLE/canonicalisation, ordering, overlap and shape regressions
+    # at the competition entry point rather than at upload/scoring time.
+    submission_errors = validate_submission_against_template(
+        output,
+        template,
+        {chip_id: meta[chip_id].shape for chip_id in required_chip_ids},
+        tasks={chip_id: meta[chip_id].kind for chip_id in required_chip_ids},
+        expected_row_count=len(template),
+    )
+    if submission_errors:
+        raise RuntimeError(
+            "generated submission failed strict validation: "
+            + "; ".join(submission_errors)
+        )
     return rows
 
 
