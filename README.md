@@ -180,6 +180,15 @@ train-chip. Опция `--allow-chip-fallback` оставлена только �
 - `final_run/artifacts/release_evidence.json`;
 - `final_run/artifacts/final_validation.json`.
 
+Короткий Makefile-путь для последней проверки:
+
+```bash
+make preflight-train TRAIN_DIR=/path/to/train WORK_DIR=final_run
+make preflight-test TEST_DIR=/path/to/test WORK_DIR=final_run
+make smoke-inference TEST_DIR=/path/to/test MODEL_CONFIG=final_run/artifacts/final_model_config.json WORK_DIR=final_run
+make release-gate EVIDENCE=final_run/artifacts/release_evidence.json WORK_DIR=final_run
+```
+
 ## Metric-max workflow на подтверждённых labelled data
 
 Ниже — путь, который должен пройти финальный конфиг. Он не использует
