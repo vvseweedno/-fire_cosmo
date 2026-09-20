@@ -77,6 +77,15 @@ def test_observation_requires_explicit_sensor_provenance():
         validate_observation(observation)
 
 
+@pytest.mark.parametrize("field", ["observation_id", "source", "sensor_family", "crs"])
+def test_observation_rejects_non_string_identity_metadata(field):
+    observation = _obs()
+    object.__setattr__(observation, field, None)
+
+    with pytest.raises(ValueError, match="metadata fields must be strings"):
+        validate_observation(observation)
+
+
 def test_observation_rejects_non_string_channel_metadata():
     observation = _obs(channels=("I4", None))  # type: ignore[arg-type]
 
