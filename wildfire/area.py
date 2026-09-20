@@ -15,7 +15,9 @@ def projected_pixel_area_m2(
 
     Geographic degree grids are deliberately rejected. They require geodesic
     area calculation and must never be converted to hectares by treating
-    degrees as metres.
+    degrees as metres. Web Mercator is also rejected: its metre-valued map
+    coordinates are not ground metres and its area distortion varies strongly
+    with latitude.
     """
 
     resolved = CRS.from_user_input(crs)
@@ -23,6 +25,11 @@ def projected_pixel_area_m2(
         raise ValueError(
             "geographic CRS requires geodesic area calculation; "
             "degree-sized pixels cannot be treated as metres"
+        )
+    if resolved.to_epsg() == 3857:
+        raise ValueError(
+            "EPSG:3857 Web Mercator is not valid for burned-area hectares; "
+            "reproject to an appropriate metric analysis CRS"
         )
     units = (resolved.linear_units or "").lower()
     if units not in {"metre", "meter", "metres", "meters", "m"}:
