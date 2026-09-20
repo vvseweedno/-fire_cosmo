@@ -1,6 +1,6 @@
+from affine import Affine
 import numpy as np
 import pytest
-from affine import Affine
 
 from wildfire.area import burned_area_hectares
 
