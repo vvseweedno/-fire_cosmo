@@ -36,6 +36,18 @@ def run(
     template_path = root / "sample_submission.csv"
     meta_path = root / "meta.csv"
 
+    # The output is published atomically later, but os.replace() would still
+    # happily overwrite an organizer input file if the caller supplied that
+    # path. Refuse those aliases before reading or running inference so a typo
+    # cannot destroy the task contract needed for reproducibility/re-runs.
+    resolved_output = output_path.resolve()
+    protected_inputs = (template_path.resolve(), meta_path.resolve())
+    if resolved_output in protected_inputs:
+        raise ValueError(
+            "output path must not overwrite organizer input files "
+            "sample_submission.csv or meta.csv"
+        )
+
     template = read_submission_template(template_path)
     meta = read_meta_csv(meta_path)
     task_contract_errors = validate_template_task_contract(
