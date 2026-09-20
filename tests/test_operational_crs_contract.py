@@ -25,7 +25,7 @@ def test_observation_rejects_nonempty_but_invalid_crs():
 
 def test_burn_pair_accepts_equivalent_crs_representations():
     pre = _sentinel2(observation_id="pre", crs="EPSG:4326", month=6)
-    post = _sentinel2(observation_id="post", crs="OGC:CRS84", month=7)
+    post = _sentinel2(observation_id="post", crs="urn:ogc:def:crs:EPSG::4326", month=7)
 
     pair = build_burn_pair(pre, post)
 
