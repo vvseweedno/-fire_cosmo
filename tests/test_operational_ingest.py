@@ -57,6 +57,11 @@ def test_viirs_missing_i5_is_not_inference_ready():
     assert readiness["ready"] is False
 
 
+def test_validate_observation_rejects_non_descriptor_input():
+    with pytest.raises(ValueError, match="must be an ObservationDescriptor"):
+        validate_observation(None)  # type: ignore[arg-type]
+
+
 def test_observation_requires_explicit_source_provenance():
     observation = _obs(source="   ")
     with pytest.raises(ValueError, match="provenance is required"):
