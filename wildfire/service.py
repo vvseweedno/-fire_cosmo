@@ -36,14 +36,7 @@ def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
         if not isinstance(properties, dict):
             raise ValueError(f"results feature {index} properties must be an object")
         feature_id = str(feature.get("id") or f"feature-{index}")
-        features.append(
-            {
-                "type": "Feature",
-                "id": feature_id,
-                "geometry": geometry,
-                "properties": properties,
-            }
-        )
+        features.append({"type": "Feature", "id": feature_id, "geometry": geometry, "properties": properties})
     return features
 
 
@@ -77,6 +70,14 @@ def normalize_polygon(polygon: list[list[float]] | None) -> tuple[tuple[float, f
         ring.append((x, y))
     if ring[0] != ring[-1]:
         ring.append(ring[0])
+    if len(set(ring[:-1])) < 3:
+        raise ValueError("polygon must contain at least three distinct vertices")
+    twice_area = sum(
+        left[0] * right[1] - right[0] * left[1]
+        for left, right in zip(ring, ring[1:], strict=True)
+    )
+    if math.isclose(twice_area, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("polygon must have non-zero area")
     return tuple(ring)
 
 
@@ -89,11 +90,7 @@ def _coordinate_pairs(geometry: dict[str, Any]) -> list[tuple[float, float]]:
     if geometry.get("type") == "Polygon":
         if not isinstance(coordinates, list) or not coordinates:
             raise ValueError("Polygon geometry must contain coordinates")
-        return [
-            (float(position[0]), float(position[1]))
-            for position in coordinates[0]
-            if isinstance(position, list) and len(position) >= 2
-        ]
+        return [(float(position[0]), float(position[1])) for position in coordinates[0] if isinstance(position, list) and len(position) >= 2]
     raise ValueError("unsupported result geometry")
 
 
@@ -105,16 +102,8 @@ def _bounds(feature: dict[str, Any]) -> tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _overlaps(
-    left: tuple[float, float, float, float],
-    right: tuple[float, float, float, float],
-) -> bool:
-    return not (
-        left[2] < right[0]
-        or right[2] < left[0]
-        or left[3] < right[1]
-        or right[3] < left[1]
-    )
+def _overlaps(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
+    return not (left[2] < right[0] or right[2] < left[0] or left[3] < right[1] or right[3] < left[1])
 
 
 def _point_in_ring(point: tuple[float, float], ring: tuple[tuple[float, float], ...]) -> bool:
@@ -131,33 +120,15 @@ def _point_in_ring(point: tuple[float, float], ring: tuple[tuple[float, float], 
     return inside
 
 
-def _orientation(
-    left: tuple[float, float],
-    middle: tuple[float, float],
-    right: tuple[float, float],
-) -> float:
-    return (middle[0] - left[0]) * (right[1] - left[1]) - (
-        middle[1] - left[1]
-    ) * (right[0] - left[0])
+def _orientation(left: tuple[float, float], middle: tuple[float, float], right: tuple[float, float]) -> float:
+    return (middle[0] - left[0]) * (right[1] - left[1]) - (middle[1] - left[1]) * (right[0] - left[0])
 
 
-def _on_segment(
-    left: tuple[float, float],
-    point: tuple[float, float],
-    right: tuple[float, float],
-) -> bool:
-    return (
-        min(left[0], right[0]) <= point[0] <= max(left[0], right[0])
-        and min(left[1], right[1]) <= point[1] <= max(left[1], right[1])
-    )
+def _on_segment(left: tuple[float, float], point: tuple[float, float], right: tuple[float, float]) -> bool:
+    return min(left[0], right[0]) <= point[0] <= max(left[0], right[0]) and min(left[1], right[1]) <= point[1] <= max(left[1], right[1])
 
 
-def _segments_intersect(
-    first_left: tuple[float, float],
-    first_right: tuple[float, float],
-    second_left: tuple[float, float],
-    second_right: tuple[float, float],
-) -> bool:
+def _segments_intersect(first_left: tuple[float, float], first_right: tuple[float, float], second_left: tuple[float, float], second_right: tuple[float, float]) -> bool:
     epsilon = 1e-12
     orientations = (
         _orientation(first_left, first_right, second_left),
@@ -165,10 +136,7 @@ def _segments_intersect(
         _orientation(second_left, second_right, first_left),
         _orientation(second_left, second_right, first_right),
     )
-    if (
-        ((orientations[0] > epsilon and orientations[1] < -epsilon) or (orientations[0] < -epsilon and orientations[1] > epsilon))
-        and ((orientations[2] > epsilon and orientations[3] < -epsilon) or (orientations[2] < -epsilon and orientations[3] > epsilon))
-    ):
+    if (((orientations[0] > epsilon and orientations[1] < -epsilon) or (orientations[0] < -epsilon and orientations[1] > epsilon)) and ((orientations[2] > epsilon and orientations[3] < -epsilon) or (orientations[2] < -epsilon and orientations[3] > epsilon))):
         return True
     return any(
         abs(orientation) <= epsilon and _on_segment(left, point, right)
@@ -181,10 +149,7 @@ def _segments_intersect(
     )
 
 
-def _geometry_intersects_ring(
-    feature: dict[str, Any],
-    ring: tuple[tuple[float, float], ...],
-) -> bool:
+def _geometry_intersects_ring(feature: dict[str, Any], ring: tuple[tuple[float, float], ...]) -> bool:
     feature_points = tuple(_coordinate_pairs(feature["geometry"]))
     if feature["geometry"].get("type") == "Point":
         return _point_in_ring(feature_points[0], ring)
@@ -194,11 +159,7 @@ def _geometry_intersects_ring(
         return True
     feature_edges = tuple(zip(feature_points, (*feature_points[1:], feature_points[0]), strict=True))
     query_edges = tuple(zip(ring, (*ring[1:], ring[0]), strict=True))
-    return any(
-        _segments_intersect(first_left, first_right, second_left, second_right)
-        for first_left, first_right in feature_edges
-        for second_left, second_right in query_edges
-    )
+    return any(_segments_intersect(first_left, first_right, second_left, second_right) for first_left, first_right in feature_edges for second_left, second_right in query_edges)
 
 
 def _parse_feature_date(feature: dict[str, Any]) -> date | None:
@@ -215,14 +176,7 @@ def _parse_feature_date(feature: dict[str, Any]) -> date | None:
             raise ValueError(f"feature {feature.get('id')} has invalid acquired_at/date") from exc
 
 
-def filter_results(
-    features: list[dict[str, Any]],
-    *,
-    bbox: tuple[float, float, float, float] | None = None,
-    polygon: tuple[tuple[float, float], ...] | None = None,
-    start_date: date | None = None,
-    end_date: date | None = None,
-) -> list[dict[str, Any]]:
+def filter_results(features: list[dict[str, Any]], *, bbox: tuple[float, float, float, float] | None = None, polygon: tuple[tuple[float, float], ...] | None = None, start_date: date | None = None, end_date: date | None = None) -> list[dict[str, Any]]:
     if start_date is not None and end_date is not None and start_date > end_date:
         raise ValueError("start_date must be earlier than or equal to end_date")
     selected: list[dict[str, Any]] = []
@@ -244,13 +198,10 @@ def _area_ha(feature: dict[str, Any]) -> float:
     properties = feature["properties"]
     raw_area = properties.get("area_ha")
     if raw_area is None:
-        raise ValueError(
-            f"feature {feature.get('id')} has no area_ha; supply area from a projected raster"
-        )
+        raise ValueError(f"feature {feature.get('id')} has no area_ha; supply area from a projected raster")
     area = float(raw_area)
     if not math.isfinite(area) or area < 0:
         raise ValueError(f"feature {feature.get('id')} has invalid area_ha")
-
     pixel_count = properties.get("pixel_count")
     pixel_area_m2 = properties.get("pixel_area_m2")
     if pixel_count is not None and pixel_area_m2 is not None:
@@ -261,11 +212,7 @@ def _area_ha(feature: dict[str, Any]) -> float:
 
 
 def analytical_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
-    contours = [
-        feature
-        for feature in features
-        if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}
-    ]
+    contours = [feature for feature in features if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}]
     area_by_severity = {str(class_id): 0.0 for class_id in (1, 2, 3)}
     for feature in contours:
         severity = int(feature["properties"].get("severity_class", 0))
@@ -275,10 +222,7 @@ def analytical_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
     total = sum(area_by_severity.values())
     return {
         "feature_count": len(features),
-        "active_fire_count": sum(
-            feature["properties"].get("kind") in {"active_fire", "af"}
-            for feature in features
-        ),
+        "active_fire_count": sum(feature["properties"].get("kind") in {"active_fire", "af"} for feature in features),
         "burned_area_contour_count": len(contours),
         "total_burn_area_ha": total,
         "area_by_severity_ha": area_by_severity,
@@ -290,38 +234,12 @@ def feature_collection(features: list[dict[str, Any]]) -> dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
-def query_results(
-    features: list[dict[str, Any]],
-    *,
-    bbox: tuple[float, float, float, float] | None = None,
-    polygon: tuple[tuple[float, float], ...] | None = None,
-    start_date: date | None = None,
-    end_date: date | None = None,
-) -> dict[str, Any]:
-    selected = filter_results(
-        features,
-        bbox=bbox,
-        polygon=polygon,
-        start_date=start_date,
-        end_date=end_date,
-    )
-    active = [
-        feature
-        for feature in selected
-        if feature["properties"].get("kind") in {"active_fire", "af"}
-    ]
-    burned = [
-        feature
-        for feature in selected
-        if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}
-    ]
+def query_results(features: list[dict[str, Any]], *, bbox: tuple[float, float, float, float] | None = None, polygon: tuple[tuple[float, float], ...] | None = None, start_date: date | None = None, end_date: date | None = None) -> dict[str, Any]:
+    selected = filter_results(features, bbox=bbox, polygon=polygon, start_date=start_date, end_date=end_date)
+    active = [feature for feature in selected if feature["properties"].get("kind") in {"active_fire", "af"}]
+    burned = [feature for feature in selected if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}]
     return {
-        "query": {
-            "bbox": bbox,
-            "polygon": polygon,
-            "start_date": start_date.isoformat() if start_date else None,
-            "end_date": end_date.isoformat() if end_date else None,
-        },
+        "query": {"bbox": bbox, "polygon": polygon, "start_date": start_date.isoformat() if start_date else None, "end_date": end_date.isoformat() if end_date else None},
         "active_fire_points": feature_collection(active),
         "burned_area_contours": feature_collection(burned),
         "summary": analytical_summary(selected),
