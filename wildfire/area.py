@@ -35,6 +35,23 @@ def projected_pixel_area_m2(
     return float(area)
 
 
+def _binary_mask(mask: np.ndarray, *, name: str) -> np.ndarray:
+    """Return a boolean raster only for explicit finite binary mask values."""
+
+    array = np.asarray(mask)
+    if array.ndim != 2:
+        raise ValueError(f"{name} must be a 2D raster")
+    if array.dtype == np.bool_:
+        return array
+    if not np.issubdtype(array.dtype, np.number):
+        raise ValueError(f"{name} must contain boolean or numeric 0/1 values")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} contains non-finite values")
+    if not np.all((array == 0) | (array == 1)):
+        raise ValueError(f"{name} must contain only 0/1 values")
+    return array.astype(bool, copy=False)
+
+
 def burned_area_hectares(
     burned_mask: np.ndarray,
     *,
@@ -42,14 +59,12 @@ def burned_area_hectares(
     crs: CRS | str,
     valid_mask: np.ndarray | None = None,
 ) -> float:
-    """Calculate burned area only when pixel area is physically grounded."""
+    """Calculate burned area only when mask and pixel area are grounded."""
 
-    burned = np.asarray(burned_mask, dtype=bool)
-    if burned.ndim != 2:
-        raise ValueError("burned_mask must be a 2D raster")
+    burned = _binary_mask(burned_mask, name="burned_mask")
 
     if valid_mask is not None:
-        valid = np.asarray(valid_mask, dtype=bool)
+        valid = _binary_mask(valid_mask, name="valid_mask")
         if valid.shape != burned.shape:
             raise ValueError("valid_mask shape differs from burned_mask")
         burned = burned & valid
