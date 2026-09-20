@@ -6,7 +6,13 @@ import pytest
 from wildfire.aoi import load_monitoring_aoi, monitoring_aoi_summary
 
 
-def _write_aoi(path: Path, *, close_ring: bool = True, crs: str = "EPSG:4326") -> None:
+def _write_aoi(
+    path: Path,
+    *,
+    close_ring: bool = True,
+    crs: str = "EPSG:4326",
+    area_km2: object = 435273,
+) -> None:
     ring = [
         [38.3, 47.1],
         [42.0, 45.0],
@@ -27,7 +33,7 @@ def _write_aoi(path: Path, *, close_ring: bool = True, crs: str = "EPSG:4326") -
                     "seasons": "2019–2025",
                     "months": "04–10",
                     "utm_zones": "EPSG:32637, EPSG:32638",
-                    "area_km2": 435273,
+                    "area_km2": area_km2,
                     "crs": crs,
                 },
                 "geometry": {"type": "Polygon", "coordinates": [ring]},
@@ -71,6 +77,17 @@ def test_load_monitoring_aoi_rejects_unexpected_crs(tmp_path: Path):
     _write_aoi(path, crs="EPSG:3857")
 
     with pytest.raises(ValueError, match="unsupported monitoring AOI CRS"):
+        load_monitoring_aoi(path)
+
+
+@pytest.mark.parametrize("area_km2", ["nan", "inf", "-inf", 0, -1])
+def test_load_monitoring_aoi_rejects_invalid_area_metadata(
+    tmp_path: Path, area_km2: object
+):
+    path = tmp_path / "aoi.geojson"
+    _write_aoi(path, area_km2=area_km2)
+
+    with pytest.raises(ValueError, match="finite and positive"):
         load_monitoring_aoi(path)
 
 
