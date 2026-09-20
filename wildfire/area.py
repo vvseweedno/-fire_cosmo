@@ -7,11 +7,17 @@ from affine import Affine
 from rasterio.crs import CRS
 
 
-def projected_pixel_area_m2(transform: Affine, crs: CRS | str) -> float:
+def projected_pixel_area_m2(
+    transform: Affine,
+    crs: CRS | str,
+) -> float:
     """Return pixel area in square metres for a metric projected CRS."""
     resolved = CRS.from_user_input(crs)
     if resolved.is_geographic:
-        raise ValueError("geographic CRS requires geodesic area calculation; degree-sized pixels cannot be treated as metres")
+        raise ValueError(
+            "geographic CRS requires geodesic area calculation; "
+            "degree-sized pixels cannot be treated as metres"
+        )
     units = (resolved.linear_units or "").lower()
     if units not in {"metre", "meter", "metres", "meters", "m"}:
         raise ValueError(f"unsupported projected CRS linear units: {units!r}")
@@ -26,7 +32,11 @@ def _binary_mask(mask: np.ndarray, *, name: str) -> np.ndarray:
     array = np.asarray(mask)
     if array.ndim != 2:
         raise ValueError(f"{name} must be a 2D raster")
-    if not (np.issubdtype(array.dtype, np.bool_) or np.issubdtype(array.dtype, np.integer) or np.issubdtype(array.dtype, np.floating)):
+    if not (
+        np.issubdtype(array.dtype, np.bool_)
+        or np.issubdtype(array.dtype, np.integer)
+        or np.issubdtype(array.dtype, np.floating)
+    ):
         raise ValueError(f"{name} must contain boolean or numeric binary values")
     if np.issubdtype(array.dtype, np.floating) and not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must not contain NaN or infinite values")
@@ -35,7 +45,13 @@ def _binary_mask(mask: np.ndarray, *, name: str) -> np.ndarray:
     return array.astype(bool, copy=False)
 
 
-def burned_area_hectares(burned_mask: np.ndarray, *, transform: Affine, crs: CRS | str, valid_mask: np.ndarray | None = None) -> float:
+def burned_area_hectares(
+    burned_mask: np.ndarray,
+    *,
+    transform: Affine,
+    crs: CRS | str,
+    valid_mask: np.ndarray | None = None,
+) -> float:
     """Calculate burned area only when pixel area and masks are grounded."""
     burned = _binary_mask(burned_mask, name="burned_mask")
     if valid_mask is not None:
