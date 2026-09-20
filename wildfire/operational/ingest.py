@@ -99,11 +99,17 @@ def validate_observation(observation: ObservationDescriptor) -> None:
         raise ValueError("source must not be empty; observation provenance is required")
     if not observation.sensor_family.strip():
         raise ValueError("sensor_family must not be empty; sensor provenance is required")
+    if not isinstance(observation.acquired_at, datetime):
+        raise ValueError("acquired_at must be a datetime")
     if observation.acquired_at.tzinfo is None or observation.acquired_at.utcoffset() is None:
         raise ValueError("acquired_at must be timezone-aware with a valid UTC offset")
     if not observation.crs.strip():
         raise ValueError("crs must not be empty")
 
+    if not isinstance(observation.bbox, tuple) or len(observation.bbox) != 4:
+        raise ValueError("bbox must be a four-coordinate tuple")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in observation.bbox):
+        raise ValueError("bbox coordinates must be numeric")
     min_x, min_y, max_x, max_y = observation.bbox
     if not all(math.isfinite(value) for value in observation.bbox):
         raise ValueError("bbox coordinates must be finite")
