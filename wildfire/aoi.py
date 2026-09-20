@@ -8,6 +8,7 @@ boundaries or derives labels from geography.
 from __future__ import annotations  # noqa: I001
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -120,8 +121,8 @@ def load_monitoring_aoi(
             area_km2 = float(raw_area)
         except (TypeError, ValueError) as exc:
             raise ValueError("AOI area_km2 must be numeric when provided") from exc
-        if area_km2 <= 0:
-            raise ValueError("AOI area_km2 must be positive")
+        if not math.isfinite(area_km2) or area_km2 <= 0:
+            raise ValueError("AOI area_km2 must be finite and positive")
 
     return MonitoringAOI(
         feature_id=feature_id,
