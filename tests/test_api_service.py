@@ -50,6 +50,19 @@ def test_query_post_accepts_polygon_and_geojson_export_is_machine_readable():
     assert exported.json()["type"] == "FeatureCollection"
 
 
+@pytest.mark.parametrize(
+    "polygon",
+    [
+        [[37.5, 55.7], [37.5, 55.7], [37.6, 55.8], [37.5, 55.7]],
+        [[37.5, 55.7], [37.6, 55.8], [37.7, 55.9], [37.5, 55.7]],
+    ],
+)
+def test_query_post_rejects_degenerate_polygons(polygon):
+    response = client.post("/api/query", json={"polygon": polygon})
+
+    assert response.status_code == 400
+
+
 def test_polygon_filter_does_not_use_bbox_overlap_as_a_match():
     response = client.post(
         "/api/query",
