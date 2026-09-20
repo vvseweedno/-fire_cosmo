@@ -82,6 +82,9 @@ class BurnObservationPair:
 def validate_observation(observation: ObservationDescriptor) -> None:
     """Validate provenance/geometry without guessing missing metadata."""
 
+    if not isinstance(observation, ObservationDescriptor):
+        raise ValueError("observation must be an ObservationDescriptor")
+
     string_fields = {
         "observation_id": observation.observation_id,
         "source": observation.source,
