@@ -67,6 +67,8 @@ def _validate_ring(raw_ring: object) -> tuple[tuple[float, float], ...]:
 
     if ring[0] != ring[-1]:
         raise ValueError("AOI polygon exterior ring must be explicitly closed")
+    if len(set(ring[:-1])) < 3:
+        raise ValueError("AOI polygon exterior ring must contain at least 3 distinct vertices")
     return tuple(ring)
 
 
