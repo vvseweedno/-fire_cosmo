@@ -57,6 +57,8 @@ def _validate_ring(raw_ring: object) -> tuple[tuple[float, float], ...]:
             lat = float(position[1])
         except (TypeError, ValueError) as exc:
             raise ValueError(f"AOI position {index} is not numeric") from exc
+        if not math.isfinite(lon) or not math.isfinite(lat):
+            raise ValueError(f"AOI position {index} must contain finite coordinates")
         if not (-180.0 <= lon <= 180.0):
             raise ValueError(f"AOI longitude out of range at position {index}: {lon}")
         if not (-90.0 <= lat <= 90.0):

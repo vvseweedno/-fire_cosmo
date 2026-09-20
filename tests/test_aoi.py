@@ -91,6 +91,22 @@ def test_load_monitoring_aoi_rejects_invalid_area_metadata(
         load_monitoring_aoi(path)
 
 
+@pytest.mark.parametrize("bad_coordinate", ["nan", "inf", "-inf"])
+def test_load_monitoring_aoi_rejects_non_finite_coordinates(
+    tmp_path: Path, bad_coordinate: str
+):
+    path = tmp_path / "aoi.geojson"
+    _write_aoi(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    ring = payload["features"][0]["geometry"]["coordinates"][0]
+    ring[0][0] = bad_coordinate
+    ring[-1][0] = bad_coordinate
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="finite coordinates"):
+        load_monitoring_aoi(path)
+
+
 def test_load_monitoring_aoi_does_not_fall_back_to_other_features(tmp_path: Path):
     path = tmp_path / "aoi.geojson"
     payload = {
