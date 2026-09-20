@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+from rasterio.crs import CRS
+
 
 TaskStage = Literal["AF", "BS"]
 
@@ -107,6 +109,10 @@ def validate_observation(observation: ObservationDescriptor) -> None:
         raise ValueError("acquired_at must be timezone-aware with a valid UTC offset")
     if not observation.crs.strip():
         raise ValueError("crs must not be empty")
+    try:
+        resolved_crs = CRS.from_user_input(observation.crs.strip())
+    except Exception as exc:
+        raise ValueError("crs must be a valid coordinate reference system") from exc
 
     if not isinstance(observation.bbox, tuple) or len(observation.bbox) != 4:
         raise ValueError("bbox must be a four-coordinate tuple")
@@ -118,7 +124,7 @@ def validate_observation(observation: ObservationDescriptor) -> None:
     if not (min_x < max_x and min_y < max_y):
         raise ValueError("bbox must satisfy min_x < max_x and min_y < max_y")
 
-    if observation.crs.strip().upper() == "EPSG:4326":
+    if resolved_crs == CRS.from_epsg(4326):
         if not (-180.0 <= min_x <= 180.0 and -180.0 <= max_x <= 180.0):
             raise ValueError("EPSG:4326 longitude is outside [-180, 180]")
         if not (-90.0 <= min_y <= 90.0 and -90.0 <= max_y <= 90.0):
@@ -202,7 +208,7 @@ def build_burn_pair(
         raise ValueError("burn observation pair currently requires Sentinel-2")
     if pre.acquired_at >= post.acquired_at:
         raise ValueError("pre observation must be earlier than post observation")
-    if pre.crs.strip().upper() != post.crs.strip().upper():
+    if CRS.from_user_input(pre.crs.strip()) != CRS.from_user_input(post.crs.strip()):
         raise ValueError("pre/post CRS differ")
     if pre.bbox != post.bbox:
         raise ValueError("pre/post bounding boxes differ; observations must be co-registered")
