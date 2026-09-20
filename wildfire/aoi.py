@@ -71,12 +71,13 @@ def _validate_ring(raw_ring: object) -> tuple[tuple[float, float], ...]:
         raise ValueError("AOI polygon exterior ring must contain at least 3 distinct vertices")
 
     # Three distinct positions are still not enough for a usable AOI: they may
-    # all lie on one line.  Reject zero-area rings before their bbox can be used
-    # for downstream satellite-observation queries.  This is deliberately a
+    # all lie on one line. Reject zero-area rings before their bbox can be used
+    # for downstream satellite-observation queries. This is deliberately a
     # topology sanity check in the declared lon/lat CRS, not an area estimate.
     twice_signed_area = sum(
-        x1 * y2 - x2 * y1
-        for (x1, y1), (x2, y2) in zip(ring, ring[1:], strict=True)
+        ring[index][0] * ring[index + 1][1]
+        - ring[index + 1][0] * ring[index][1]
+        for index in range(len(ring) - 1)
     )
     if math.isclose(twice_signed_area, 0.0, rel_tol=0.0, abs_tol=1e-12):
         raise ValueError("AOI polygon exterior ring must enclose non-zero area")
