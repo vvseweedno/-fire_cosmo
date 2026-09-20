@@ -78,6 +78,21 @@ class BurnObservationPair:
 def validate_observation(observation: ObservationDescriptor) -> None:
     """Validate provenance/geometry without guessing missing metadata."""
 
+    string_fields = {
+        "observation_id": observation.observation_id,
+        "source": observation.source,
+        "sensor_family": observation.sensor_family,
+        "crs": observation.crs,
+    }
+    invalid_string_fields = [
+        name for name, value in string_fields.items() if not isinstance(value, str)
+    ]
+    if invalid_string_fields:
+        raise ValueError(
+            "observation metadata fields must be strings; invalid="
+            f"{sorted(invalid_string_fields)}"
+        )
+
     if not observation.observation_id.strip():
         raise ValueError("observation_id must not be empty")
     if not observation.source.strip():
