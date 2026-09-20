@@ -72,6 +72,22 @@ def test_load_monitoring_aoi_requires_closed_ring(tmp_path: Path):
         load_monitoring_aoi(path)
 
 
+def test_load_monitoring_aoi_rejects_degenerate_ring(tmp_path: Path):
+    path = tmp_path / "aoi.geojson"
+    _write_aoi(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["features"][0]["geometry"]["coordinates"][0] = [
+        [40.0, 50.0],
+        [40.0, 50.0],
+        [41.0, 51.0],
+        [40.0, 50.0],
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="at least 3 distinct vertices"):
+        load_monitoring_aoi(path)
+
+
 def test_load_monitoring_aoi_rejects_unexpected_crs(tmp_path: Path):
     path = tmp_path / "aoi.geojson"
     _write_aoi(path, crs="EPSG:3857")
