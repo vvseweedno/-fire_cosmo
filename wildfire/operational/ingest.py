@@ -127,11 +127,14 @@ def validate_observation(observation: ObservationDescriptor) -> None:
     if not (min_x < max_x and min_y < max_y):
         raise ValueError("bbox must satisfy min_x < max_x and min_y < max_y")
 
-    if resolved_crs == CRS.from_epsg(4326):
+    # A geographic CRS can be expressed by many equivalent/near-equivalent
+    # identifiers (for example EPSG:4326 or OGC:CRS84).  Do not make the
+    # coordinate-domain safety gate depend on one spelling of WGS84.
+    if resolved_crs.is_geographic:
         if not (-180.0 <= min_x <= 180.0 and -180.0 <= max_x <= 180.0):
-            raise ValueError("EPSG:4326 longitude is outside [-180, 180]")
+            raise ValueError("geographic CRS longitude is outside [-180, 180]")
         if not (-90.0 <= min_y <= 90.0 and -90.0 <= max_y <= 90.0):
-            raise ValueError("EPSG:4326 latitude is outside [-90, 90]")
+            raise ValueError("geographic CRS latitude is outside [-90, 90]")
 
     _normalise_channels(observation.channels)
 
