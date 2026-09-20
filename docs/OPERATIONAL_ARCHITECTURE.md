@@ -53,12 +53,14 @@ above the ML core. They must not silently rename or reorder bands.
 - explicit observation id;
 - explicit sensor family;
 - timezone-aware acquisition timestamp;
-- explicit CRS;
+- explicit, parseable CRS;
 - explicit bounding box;
 - explicit channel names;
-- optional source/provenance string.
+- explicit non-empty source/provenance string.
 
-Missing metadata fails instead of being guessed.
+Missing or malformed metadata fails instead of being guessed. CRS identifiers
+are parsed through Rasterio/PROJ rather than accepted merely because they are
+non-empty strings.
 
 ## Current capability truth table
 
@@ -88,7 +90,7 @@ Currently implemented operational pairing contract:
 - explicit Sentinel-2 PRE observation;
 - explicit Sentinel-2 POST observation;
 - PRE timestamp strictly earlier than POST;
-- same CRS and bounding box;
+- equivalent parsed CRS and same bounding box;
 - B8A + B12 present in both observations.
 
 The strict pair represents co-registration metadata. Raster-level shape,
