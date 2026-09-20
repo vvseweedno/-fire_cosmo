@@ -88,6 +88,22 @@ def test_load_monitoring_aoi_rejects_degenerate_ring(tmp_path: Path):
         load_monitoring_aoi(path)
 
 
+def test_load_monitoring_aoi_rejects_collinear_ring(tmp_path: Path):
+    path = tmp_path / "aoi.geojson"
+    _write_aoi(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["features"][0]["geometry"]["coordinates"][0] = [
+        [40.0, 50.0],
+        [41.0, 51.0],
+        [42.0, 52.0],
+        [40.0, 50.0],
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="enclose non-zero area"):
+        load_monitoring_aoi(path)
+
+
 def test_load_monitoring_aoi_rejects_unexpected_crs(tmp_path: Path):
     path = tmp_path / "aoi.geojson"
     _write_aoi(path, crs="EPSG:3857")
