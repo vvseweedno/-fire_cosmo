@@ -156,7 +156,9 @@ def observation_readiness(
     """
 
     validate_observation(observation)
-    resolved_stage = stage.upper()
+    if not isinstance(stage, str):
+        raise ValueError("stage must be AF or BS")
+    resolved_stage = stage.strip().upper()
     if resolved_stage not in {"AF", "BS"}:
         raise ValueError("stage must be AF or BS")
 
