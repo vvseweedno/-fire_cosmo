@@ -49,3 +49,36 @@ def test_burned_area_hectares_rejects_shape_mismatch():
             crs="EPSG:32637",
             valid_mask=valid,
         )
+
+
+@pytest.mark.parametrize(
+    "bad_value, error",
+    [
+        (np.nan, "non-finite"),
+        (np.inf, "non-finite"),
+        (-1.0, "only 0/1"),
+        (2.0, "only 0/1"),
+    ],
+)
+def test_burned_area_hectares_rejects_invalid_burned_values(bad_value, error):
+    burned = np.array([[1.0, bad_value], [0.0, 1.0]])
+
+    with pytest.raises(ValueError, match=error):
+        burned_area_hectares(
+            burned,
+            transform=Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0),
+            crs="EPSG:32637",
+        )
+
+
+def test_burned_area_hectares_rejects_invalid_valid_mask_values():
+    burned = np.ones((2, 2), dtype=np.uint8)
+    valid = np.array([[1.0, np.nan], [1.0, 1.0]])
+
+    with pytest.raises(ValueError, match="valid_mask contains non-finite"):
+        burned_area_hectares(
+            burned,
+            transform=Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0),
+            crs="EPSG:32637",
+            valid_mask=valid,
+        )
