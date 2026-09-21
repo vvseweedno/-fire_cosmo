@@ -6,6 +6,22 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_spec_does_not_publish_unverified_organizer_score_formula():
+    response = client.get("/api/spec")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "working_score_formula" not in payload
+    assert payload["organizer_scoring"] == {
+        "status": "UNVERIFIED",
+        "formula": None,
+        "detail": (
+            "No organizer-verified scoring formula is bundled; internal working "
+            "objectives must not be presented as the public competition contract."
+        ),
+    }
+
+
 def test_offline_summary_returns_area_by_severity():
     response = client.get("/api/summary")
 
