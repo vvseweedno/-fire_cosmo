@@ -58,14 +58,14 @@ def normalize_polygon(polygon: list[list[float]] | None) -> tuple[tuple[float, f
     if polygon is None:
         return None
     if len(polygon) < 4:
-        raise ValueError("polygon must contain at least four positions")
+        raise ValueError("polygon must contain at least four coordinate pairs including closure")
     ring: list[tuple[float, float]] = []
-    for position in polygon:
-        if len(position) < 2:
-            raise ValueError("polygon positions must contain x and y")
-        x, y = float(position[0]), float(position[1])
-        if not (math.isfinite(x) and math.isfinite(y)):
-            raise ValueError("polygon positions must be finite")
+    for point in polygon:
+        if len(point) != 2:
+            raise ValueError("polygon coordinates must be [x, y] pairs")
+        x, y = float(point[0]), float(point[1])
+        if not math.isfinite(x) or not math.isfinite(y):
+            raise ValueError("polygon coordinates must be finite")
         ring.append((x, y))
     if ring[0] != ring[-1]:
         ring.append(ring[0])
@@ -77,43 +77,31 @@ def normalize_polygon(polygon: list[list[float]] | None) -> tuple[tuple[float, f
     return tuple(ring)
 
 
-def _coordinate_pairs(geometry: dict[str, Any]) -> list[tuple[float, float]]:
-    coordinates = geometry.get("coordinates")
-    if geometry.get("type") == "Point":
-        if not isinstance(coordinates, list) or len(coordinates) < 2:
-            raise ValueError("Point geometry must contain x and y")
-        return [(float(coordinates[0]), float(coordinates[1]))]
-    if geometry.get("type") == "Polygon":
-        if not isinstance(coordinates, list) or not coordinates:
-            raise ValueError("Polygon geometry must contain coordinates")
-        return [(float(position[0]), float(position[1])) for position in coordinates[0] if isinstance(position, list) and len(position) >= 2]
-    raise ValueError("unsupported result geometry")
+def _feature_date(feature: dict[str, Any]) -> date | None:
+    raw = feature["properties"].get("acquired_at") or feature["properties"].get("date")
+    if not raw:
+        return None
+    return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).date()
 
 
-def _bounds(feature: dict[str, Any]) -> tuple[float, float, float, float]:
-    pairs = _coordinate_pairs(feature["geometry"])
-    if not pairs:
-        raise ValueError(f"feature {feature.get('id')} has empty geometry")
-    xs, ys = zip(*pairs, strict=True)
+def _point_in_bbox(point: tuple[float, float], bbox: tuple[float, float, float, float]) -> bool:
+    x, y = point
+    return bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]
+
+
+def _geometry_bbox(feature: dict[str, Any]) -> tuple[float, float, float, float]:
+    geometry = feature["geometry"]
+    if geometry["type"] == "Point":
+        x, y = geometry["coordinates"][:2]
+        return float(x), float(y), float(x), float(y)
+    ring = geometry["coordinates"][0]
+    xs = [float(point[0]) for point in ring]
+    ys = [float(point[1]) for point in ring]
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _overlaps(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
-    return not (left[2] < right[0] or right[2] < left[0] or left[3] < right[1] or right[3] < left[1])
-
-
-def _point_in_ring(point: tuple[float, float], ring: tuple[tuple[float, float], ...]) -> bool:
-    x, y = point
-    inside = False
-    for left, right in zip(ring, (*ring[1:], ring[0]), strict=True):
-        x1, y1 = left
-        x2, y2 = right
-        crosses = (y1 > y) != (y2 > y)
-        if crosses:
-            intersection_x = (x2 - x1) * (y - y1) / (y2 - y1) + x1
-            if x < intersection_x:
-                inside = not inside
-    return inside
+def _bbox_intersects(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
+    return not (left[2] < right[0] or left[0] > right[2] or left[3] < right[1] or left[1] > right[3])
 
 
 def _orientation(left: tuple[float, float], middle: tuple[float, float], right: tuple[float, float]) -> float:
@@ -121,7 +109,7 @@ def _orientation(left: tuple[float, float], middle: tuple[float, float], right: 
 
 
 def _on_segment(left: tuple[float, float], point: tuple[float, float], right: tuple[float, float]) -> bool:
-    return min(left[0], right[0]) <= point[0] <= max(left[0], right[0]) and min(left[1], right[1]) <= point[1] <= max(left[1], right[1])
+    return min(left[0], right[0]) - 1e-12 <= point[0] <= max(left[0], right[0]) + 1e-12 and min(left[1], right[1]) - 1e-12 <= point[1] <= max(left[1], right[1]) + 1e-12
 
 
 def _segments_intersect(first_left: tuple[float, float], first_right: tuple[float, float], second_left: tuple[float, float], second_right: tuple[float, float]) -> bool:
@@ -132,46 +120,48 @@ def _segments_intersect(first_left: tuple[float, float], first_right: tuple[floa
     return any(abs(orientation) <= epsilon and _on_segment(left, point, right) for orientation, left, point, right in ((orientations[0], first_left, second_left, first_right), (orientations[1], first_left, second_right, first_right), (orientations[2], second_left, first_left, second_right), (orientations[3], second_left, first_right, second_right)))
 
 
+def _point_in_ring(point: tuple[float, float], ring: tuple[tuple[float, float], ...]) -> bool:
+    inside = False
+    for left, right in zip(ring, ring[1:]):
+        if abs(_orientation(left, right, point)) <= 1e-12 and _on_segment(left, point, right):
+            return True
+        if (left[1] > point[1]) != (right[1] > point[1]):
+            intersection_x = (right[0] - left[0]) * (point[1] - left[1]) / (right[1] - left[1]) + left[0]
+            if point[0] < intersection_x:
+                inside = not inside
+    return inside
+
+
 def _geometry_intersects_ring(feature: dict[str, Any], ring: tuple[tuple[float, float], ...]) -> bool:
-    feature_points = tuple(_coordinate_pairs(feature["geometry"]))
-    if feature["geometry"].get("type") == "Point":
-        return _point_in_ring(feature_points[0], ring)
-    if any(_point_in_ring(point, ring) for point in feature_points):
+    geometry = feature["geometry"]
+    if geometry["type"] == "Point":
+        coordinates = geometry["coordinates"]
+        return _point_in_ring((float(coordinates[0]), float(coordinates[1])), ring)
+    feature_ring = tuple((float(point[0]), float(point[1])) for point in geometry["coordinates"][0])
+    if any(_point_in_ring(point, ring) for point in feature_ring[:-1]):
         return True
-    if any(_point_in_ring(point, feature_points) for point in ring):
+    if any(_point_in_ring(point, feature_ring) for point in ring[:-1]):
         return True
-    feature_edges = tuple(zip(feature_points, (*feature_points[1:], feature_points[0]), strict=True))
-    query_edges = tuple(zip(ring, (*ring[1:], ring[0]), strict=True))
-    return any(_segments_intersect(first_left, first_right, second_left, second_right) for first_left, first_right in feature_edges for second_left, second_right in query_edges)
-
-
-def _parse_feature_date(feature: dict[str, Any]) -> date | None:
-    value = feature["properties"].get("acquired_at", feature["properties"].get("date"))
-    if value in (None, ""):
-        return None
-    text = str(value)
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
-    except ValueError:
-        try:
-            return date.fromisoformat(text)
-        except ValueError as exc:
-            raise ValueError(f"feature {feature.get('id')} has invalid acquired_at/date") from exc
+    return any(_segments_intersect(left, right, other_left, other_right) for left, right in zip(feature_ring, feature_ring[1:]) for other_left, other_right in zip(ring, ring[1:]))
 
 
 def filter_results(features: list[dict[str, Any]], *, bbox: tuple[float, float, float, float] | None = None, polygon: tuple[tuple[float, float], ...] | None = None, start_date: date | None = None, end_date: date | None = None) -> list[dict[str, Any]]:
-    if start_date is not None and end_date is not None and start_date > end_date:
-        raise ValueError("start_date must be earlier than or equal to end_date")
     selected: list[dict[str, Any]] = []
+    polygon_bbox = None
+    if polygon is not None:
+        xs = [point[0] for point in polygon]
+        ys = [point[1] for point in polygon]
+        polygon_bbox = (min(xs), min(ys), max(xs), max(ys))
     for feature in features:
-        if bbox is not None and not _overlaps(_bounds(feature), bbox):
+        feature_date = _feature_date(feature)
+        if start_date is not None and (feature_date is None or feature_date < start_date):
             continue
-        if polygon is not None and not _geometry_intersects_ring(feature, polygon):
+        if end_date is not None and (feature_date is None or feature_date > end_date):
             continue
-        acquired = _parse_feature_date(feature)
-        if start_date is not None and (acquired is None or acquired < start_date):
+        feature_bbox = _geometry_bbox(feature)
+        if bbox is not None and not _bbox_intersects(feature_bbox, bbox):
             continue
-        if end_date is not None and (acquired is None or acquired > end_date):
+        if polygon is not None and (polygon_bbox is None or not _bbox_intersects(feature_bbox, polygon_bbox) or not _geometry_intersects_ring(feature, polygon)):
             continue
         selected.append(feature)
     return selected
@@ -187,19 +177,22 @@ def _area_ha(feature: dict[str, Any]) -> float:
         raise ValueError(f"feature {feature.get('id')} has invalid area_ha")
     pixel_count = properties.get("pixel_count")
     pixel_area_m2 = properties.get("pixel_area_m2")
-    if pixel_count is not None and pixel_area_m2 is not None:
-        try:
-            count = float(pixel_count)
-            pixel_area = float(pixel_area_m2)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"feature {feature.get('id')} has invalid pixel geometry metadata") from exc
-        if not math.isfinite(count) or count < 0 or not count.is_integer():
-            raise ValueError(f"feature {feature.get('id')} has invalid pixel_count")
-        if not math.isfinite(pixel_area) or pixel_area <= 0:
-            raise ValueError(f"feature {feature.get('id')} has invalid pixel_area_m2")
-        expected = count * pixel_area / 10_000.0
-        if not math.isfinite(expected) or not math.isclose(area, expected, rel_tol=1e-6, abs_tol=1e-9):
-            raise ValueError(f"feature {feature.get('id')} area_ha disagrees with pixel geometry metadata")
+    if (pixel_count is None) != (pixel_area_m2 is None):
+        raise ValueError(f"feature {feature.get('id')} has incomplete pixel geometry metadata")
+    if pixel_count is None:
+        raise ValueError(f"feature {feature.get('id')} has no pixel geometry metadata; area requires projected-raster provenance")
+    try:
+        count = float(pixel_count)
+        pixel_area = float(pixel_area_m2)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"feature {feature.get('id')} has invalid pixel geometry metadata") from exc
+    if not math.isfinite(count) or count < 0 or not count.is_integer():
+        raise ValueError(f"feature {feature.get('id')} has invalid pixel_count")
+    if not math.isfinite(pixel_area) or pixel_area <= 0:
+        raise ValueError(f"feature {feature.get('id')} has invalid pixel_area_m2")
+    expected = count * pixel_area / 10_000.0
+    if not math.isfinite(expected) or not math.isclose(area, expected, rel_tol=1e-6, abs_tol=1e-9):
+        raise ValueError(f"feature {feature.get('id')} area_ha disagrees with pixel geometry metadata")
     return area
 
 
