@@ -79,13 +79,14 @@ def spec() -> dict:
                 ],
             },
         },
-        "working_score_formula": (
-            "0.35*F1_AF + 0.35*IoU_burn + 0.30*mIoU_severity"
-        ),
-        "working_score_status": (
-            "configured competition objective; bind organizer confirmation "
-            "to release evidence before calling it publicly verified"
-        ),
+        "organizer_scoring": {
+            "status": "UNVERIFIED",
+            "formula": None,
+            "detail": (
+                "No organizer-verified scoring formula is bundled; internal working "
+                "objectives must not be presented as the public competition contract."
+            ),
+        },
         "aoi_endpoint": "/api/aoi",
         "readiness_endpoint": "/api/readiness",
         "result_endpoints": {
