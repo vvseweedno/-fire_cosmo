@@ -36,6 +36,16 @@ def test_burned_area_hectares_counts_burned_valid_pixels():
     assert area == pytest.approx(0.08)
 
 
+def test_burned_area_hectares_rejects_non_finite_total():
+    # Each coefficient and the pixel determinant are finite, but multiplying a
+    # finite ~1e308 m2 pixel area by several burned pixels overflows to inf.
+    burned = np.ones((2, 2), dtype=np.uint8)
+    transform = Affine(1e154, 0.0, 0.0, 0.0, -1e154, 0.0)
+
+    with pytest.raises(ValueError, match="non-finite result"):
+        burned_area_hectares(burned, transform=transform, crs="EPSG:32637")
+
+
 def test_burned_area_hectares_rejects_burn_outside_valid_observation():
     burned = np.array([[1, 1], [0, 1]], dtype=np.uint8)
     valid = np.array([[1, 0], [1, 1]], dtype=np.uint8)
