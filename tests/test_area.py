@@ -51,6 +51,18 @@ def test_burned_area_hectares_rejects_geographic_degree_grid():
         )
 
 
+def test_burned_area_hectares_rejects_geocentric_crs():
+    burned = np.ones((2, 2), dtype=np.uint8)
+    transform = Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0)
+
+    with pytest.raises(ValueError, match="projected ground-surface CRS"):
+        burned_area_hectares(
+            burned,
+            transform=transform,
+            crs="EPSG:4978",
+        )
+
+
 def test_burned_area_hectares_rejects_web_mercator_map_area():
     burned = np.ones((2, 2), dtype=np.uint8)
     transform = Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0)
