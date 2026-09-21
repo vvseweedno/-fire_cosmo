@@ -11,6 +11,16 @@ def test_projected_pixel_area_uses_affine_determinant():
     assert projected_pixel_area_m2(transform, "EPSG:32637") == 400.0
 
 
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_projected_pixel_area_rejects_non_finite_georeferencing(non_finite):
+    # A non-finite origin does not affect the determinant, so checking only
+    # pixel area would otherwise return a plausible 400 m2 for an invalid grid.
+    transform = Affine(20.0, 0.0, non_finite, 0.0, -20.0, 200.0)
+
+    with pytest.raises(ValueError, match="non-finite coefficients"):
+        projected_pixel_area_m2(transform, "EPSG:32637")
+
+
 def test_burned_area_hectares_counts_burned_valid_pixels():
     burned = np.array([[1, 0], [0, 1]], dtype=np.uint8)
     valid = np.array([[1, 0], [1, 1]], dtype=np.uint8)
