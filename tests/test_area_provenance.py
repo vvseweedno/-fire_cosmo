@@ -13,8 +13,18 @@ client = TestClient(app)
     "properties",
     [
         {"kind": "burned_area", "severity_class": 2, "area_ha": 1.0},
-        {"kind": "burned_area", "severity_class": 2, "area_ha": 1.0, "pixel_count": 25},
-        {"kind": "burned_area", "severity_class": 2, "area_ha": 1.0, "pixel_area_m2": 400.0},
+        {
+            "kind": "burned_area",
+            "severity_class": 2,
+            "area_ha": 1.0,
+            "pixel_count": 25,
+        },
+        {
+            "kind": "burned_area",
+            "severity_class": 2,
+            "area_ha": 1.0,
+            "pixel_area_m2": 400.0,
+        },
     ],
 )
 def test_summary_rejects_burn_area_without_complete_raster_provenance(
