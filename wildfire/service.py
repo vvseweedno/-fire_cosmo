@@ -24,7 +24,6 @@ def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
     raw_features = payload.get("features")
     if not isinstance(raw_features, list):
         raise ValueError("results catalog features must be a list")
-
     features: list[dict[str, Any]] = []
     for index, feature in enumerate(raw_features):
         if not isinstance(feature, dict) or feature.get("type") != "Feature":
@@ -74,7 +73,7 @@ def normalize_polygon(polygon: list[list[float]] | None) -> tuple[tuple[float, f
         raise ValueError("polygon must contain at least three distinct vertices")
     twice_area = sum(
         left[0] * right[1] - right[0] * left[1]
-        for left, right in zip(ring, ring[1:], strict=True)
+        for left, right in zip(ring, ring[1:])
     )
     if math.isclose(twice_area, 0.0, rel_tol=0.0, abs_tol=1e-12):
         raise ValueError("polygon must have non-zero area")
