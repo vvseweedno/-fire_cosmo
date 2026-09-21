@@ -71,10 +71,7 @@ def normalize_polygon(polygon: list[list[float]] | None) -> tuple[tuple[float, f
         ring.append(ring[0])
     if len(set(ring[:-1])) < 3:
         raise ValueError("polygon must contain at least three distinct vertices")
-    twice_area = sum(
-        left[0] * right[1] - right[0] * left[1]
-        for left, right in zip(ring, ring[1:])
-    )
+    twice_area = sum(left[0] * right[1] - right[0] * left[1] for left, right in zip(ring, ring[1:]))
     if math.isclose(twice_area, 0.0, rel_tol=0.0, abs_tol=1e-12):
         raise ValueError("polygon must have non-zero area")
     return tuple(ring)
@@ -129,23 +126,10 @@ def _on_segment(left: tuple[float, float], point: tuple[float, float], right: tu
 
 def _segments_intersect(first_left: tuple[float, float], first_right: tuple[float, float], second_left: tuple[float, float], second_right: tuple[float, float]) -> bool:
     epsilon = 1e-12
-    orientations = (
-        _orientation(first_left, first_right, second_left),
-        _orientation(first_left, first_right, second_right),
-        _orientation(second_left, second_right, first_left),
-        _orientation(second_left, second_right, first_right),
-    )
+    orientations = (_orientation(first_left, first_right, second_left), _orientation(first_left, first_right, second_right), _orientation(second_left, second_right, first_left), _orientation(second_left, second_right, first_right))
     if (((orientations[0] > epsilon and orientations[1] < -epsilon) or (orientations[0] < -epsilon and orientations[1] > epsilon)) and ((orientations[2] > epsilon and orientations[3] < -epsilon) or (orientations[2] < -epsilon and orientations[3] > epsilon))):
         return True
-    return any(
-        abs(orientation) <= epsilon and _on_segment(left, point, right)
-        for orientation, left, point, right in (
-            (orientations[0], first_left, second_left, first_right),
-            (orientations[1], first_left, second_right, first_right),
-            (orientations[2], second_left, first_left, second_right),
-            (orientations[3], second_left, first_right, second_right),
-        )
-    )
+    return any(abs(orientation) <= epsilon and _on_segment(left, point, right) for orientation, left, point, right in ((orientations[0], first_left, second_left, first_right), (orientations[1], first_left, second_right, first_right), (orientations[2], second_left, first_left, second_right), (orientations[3], second_left, first_right, second_right)))
 
 
 def _geometry_intersects_ring(feature: dict[str, Any], ring: tuple[tuple[float, float], ...]) -> bool:
@@ -204,8 +188,17 @@ def _area_ha(feature: dict[str, Any]) -> float:
     pixel_count = properties.get("pixel_count")
     pixel_area_m2 = properties.get("pixel_area_m2")
     if pixel_count is not None and pixel_area_m2 is not None:
-        expected = float(pixel_count) * float(pixel_area_m2) / 10_000.0
-        if not math.isclose(area, expected, rel_tol=1e-6, abs_tol=1e-9):
+        try:
+            count = float(pixel_count)
+            pixel_area = float(pixel_area_m2)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"feature {feature.get('id')} has invalid pixel geometry metadata") from exc
+        if not math.isfinite(count) or count < 0 or not count.is_integer():
+            raise ValueError(f"feature {feature.get('id')} has invalid pixel_count")
+        if not math.isfinite(pixel_area) or pixel_area <= 0:
+            raise ValueError(f"feature {feature.get('id')} has invalid pixel_area_m2")
+        expected = count * pixel_area / 10_000.0
+        if not math.isfinite(expected) or not math.isclose(area, expected, rel_tol=1e-6, abs_tol=1e-9):
             raise ValueError(f"feature {feature.get('id')} area_ha disagrees with pixel geometry metadata")
     return area
 
@@ -219,14 +212,7 @@ def analytical_summary(features: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"feature {feature.get('id')} has invalid severity_class")
         area_by_severity[str(severity)] += _area_ha(feature)
     total = sum(area_by_severity.values())
-    return {
-        "feature_count": len(features),
-        "active_fire_count": sum(feature["properties"].get("kind") in {"active_fire", "af"} for feature in features),
-        "burned_area_contour_count": len(contours),
-        "total_burn_area_ha": total,
-        "area_by_severity_ha": area_by_severity,
-        "area_source": "projected-raster pixel metadata carried by each contour",
-    }
+    return {"feature_count": len(features), "active_fire_count": sum(feature["properties"].get("kind") in {"active_fire", "af"} for feature in features), "burned_area_contour_count": len(contours), "total_burn_area_ha": total, "area_by_severity_ha": area_by_severity, "area_source": "projected-raster pixel metadata carried by each contour"}
 
 
 def feature_collection(features: list[dict[str, Any]]) -> dict[str, Any]:
@@ -237,9 +223,4 @@ def query_results(features: list[dict[str, Any]], *, bbox: tuple[float, float, f
     selected = filter_results(features, bbox=bbox, polygon=polygon, start_date=start_date, end_date=end_date)
     active = [feature for feature in selected if feature["properties"].get("kind") in {"active_fire", "af"}]
     burned = [feature for feature in selected if feature["properties"].get("kind") in {"burned_area", "burn", "severity"}]
-    return {
-        "query": {"bbox": bbox, "polygon": polygon, "start_date": start_date.isoformat() if start_date else None, "end_date": end_date.isoformat() if end_date else None},
-        "active_fire_points": feature_collection(active),
-        "burned_area_contours": feature_collection(burned),
-        "summary": analytical_summary(selected),
-    }
+    return {"query": {"bbox": bbox, "polygon": polygon, "start_date": start_date.isoformat() if start_date else None, "end_date": end_date.isoformat() if end_date else None}, "active_fire_points": feature_collection(active), "burned_area_contours": feature_collection(burned), "summary": analytical_summary(selected)}
