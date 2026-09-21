@@ -78,7 +78,11 @@ def burned_area_hectares(
             raise ValueError("valid_mask shape differs from burned_mask")
         if not np.any(valid):
             raise ValueError("valid_mask contains no valid observation pixels")
-        burned = burned & valid
+        # A positive burn classification outside the observation-valid support
+        # is contradictory evidence. Silently clipping it would hide an
+        # upstream masking/alignment bug and could under-report hectares.
+        if np.any(burned & ~valid):
+            raise ValueError("burned_mask contains burn pixels outside valid_mask")
 
     pixel_area = projected_pixel_area_m2(transform, crs)
     burned_pixels = int(np.count_nonzero(burned))
