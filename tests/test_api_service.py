@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -30,6 +32,48 @@ def test_offline_summary_returns_area_by_severity():
     assert payload["total_burn_area_ha"] == pytest.approx(1.4)
     assert payload["area_by_severity_ha"] == {"1": 0.0, "2": 1.0, "3": 0.4}
     assert payload["active_fire_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("pixel_count", "pixel_area_m2"),
+    [
+        (-1, -10_000.0),
+        (1.5, 10_000.0 / 1.5),
+        (1, 0.0),
+        (1, float("inf")),
+    ],
+)
+def test_summary_rejects_invalid_pixel_geometry_metadata(
+    tmp_path, monkeypatch, pixel_count, pixel_area_m2
+):
+    catalog = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": "invalid-area-evidence",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+                },
+                "properties": {
+                    "kind": "burned_area",
+                    "severity_class": 2,
+                    "area_ha": 1.0,
+                    "pixel_count": pixel_count,
+                    "pixel_area_m2": pixel_area_m2,
+                },
+            }
+        ],
+    }
+    path = tmp_path / "results.geojson"
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+    monkeypatch.setenv("WILDFIRE_RESULTS_GEOJSON", str(path))
+
+    response = client.get("/api/summary")
+
+    assert response.status_code == 400
+    assert "invalid" in response.json()["detail"]
 
 
 def test_spatial_temporal_query_filters_demo_features():
