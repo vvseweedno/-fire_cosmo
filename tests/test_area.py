@@ -11,8 +11,8 @@ def test_projected_pixel_area_uses_affine_determinant():
     assert projected_pixel_area_m2(transform, "EPSG:32637") == 400.0
 
 
-def test_burned_area_hectares_counts_only_burned_valid_pixels():
-    burned = np.array([[1, 1], [0, 1]], dtype=np.uint8)
+def test_burned_area_hectares_counts_burned_valid_pixels():
+    burned = np.array([[1, 0], [0, 1]], dtype=np.uint8)
     valid = np.array([[1, 0], [1, 1]], dtype=np.uint8)
     transform = Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0)
 
@@ -24,6 +24,19 @@ def test_burned_area_hectares_counts_only_burned_valid_pixels():
     )
 
     assert area == pytest.approx(0.08)
+
+
+def test_burned_area_hectares_rejects_burn_outside_valid_observation():
+    burned = np.array([[1, 1], [0, 1]], dtype=np.uint8)
+    valid = np.array([[1, 0], [1, 1]], dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="outside valid_mask"):
+        burned_area_hectares(
+            burned,
+            transform=Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0),
+            crs="EPSG:32637",
+            valid_mask=valid,
+        )
 
 
 def test_burned_area_hectares_rejects_geographic_degree_grid():
