@@ -76,6 +76,8 @@ def burned_area_hectares(
         valid = _binary_mask(valid_mask, name="valid_mask")
         if valid.shape != burned.shape:
             raise ValueError("valid_mask shape differs from burned_mask")
+        if not np.any(valid):
+            raise ValueError("valid_mask contains no valid observation pixels")
         burned = burned & valid
 
     pixel_area = projected_pixel_area_m2(transform, crs)
