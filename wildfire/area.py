@@ -40,6 +40,12 @@ def projected_pixel_area_m2(
     if units not in {"metre", "meter", "metres", "meters", "m"}:
         raise ValueError(f"unsupported projected CRS linear units: {units!r}")
 
+    # Pixel size alone is insufficient evidence when the raster origin or any
+    # other affine coefficient is NaN/Inf: that raster is not validly
+    # georeferenced, even if the 2-D determinant happens to remain finite.
+    if not all(np.isfinite(value) for value in transform[:6]):
+        raise ValueError("pixel transform contains non-finite coefficients")
+
     # Determinant handles north-up and rotated/sheared affine transforms.
     area = abs(transform.a * transform.e - transform.b * transform.d)
     if not np.isfinite(area) or area <= 0:
