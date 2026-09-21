@@ -100,4 +100,10 @@ def burned_area_hectares(
     hectares = burned_pixels * pixel_area / 10_000.0
     if not np.isfinite(hectares):
         raise ValueError("burned-area calculation produced a non-finite result")
+    # A positive burn count must never be reported as exactly zero hectares.
+    # With an absurdly tiny but finite affine determinant, floating-point
+    # underflow can otherwise erase positive burn evidence and make the API
+    # indistinguishable from a genuinely empty burn mask.
+    if burned_pixels > 0 and hectares == 0.0:
+        raise ValueError("burned-area calculation underflowed to zero")
     return float(hectares)
