@@ -46,6 +46,16 @@ def test_burned_area_hectares_rejects_non_finite_total():
         burned_area_hectares(burned, transform=transform, crs="EPSG:32637")
 
 
+def test_burned_area_hectares_rejects_positive_burn_underflow_to_zero():
+    # The determinant remains finite and positive, but converting the single
+    # burned pixel to hectares underflows to exactly 0.0 in binary64.
+    burned = np.ones((1, 1), dtype=np.uint8)
+    transform = Affine(1e-160, 0.0, 0.0, 0.0, -1e-160, 0.0)
+
+    with pytest.raises(ValueError, match="underflowed to zero"):
+        burned_area_hectares(burned, transform=transform, crs="EPSG:32637")
+
+
 def test_burned_area_hectares_rejects_burn_outside_valid_observation():
     burned = np.array([[1, 1], [0, 1]], dtype=np.uint8)
     valid = np.array([[1, 0], [1, 1]], dtype=np.uint8)
