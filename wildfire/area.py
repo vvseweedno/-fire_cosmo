@@ -97,4 +97,7 @@ def burned_area_hectares(
 
     pixel_area = projected_pixel_area_m2(transform, crs)
     burned_pixels = int(np.count_nonzero(burned))
-    return burned_pixels * pixel_area / 10_000.0
+    hectares = burned_pixels * pixel_area / 10_000.0
+    if not np.isfinite(hectares):
+        raise ValueError("burned-area calculation produced a non-finite result")
+    return float(hectares)
