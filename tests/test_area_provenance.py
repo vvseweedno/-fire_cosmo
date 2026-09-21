@@ -28,7 +28,9 @@ client = TestClient(app)
     ],
 )
 def test_summary_rejects_burn_area_without_complete_raster_provenance(
-    tmp_path, monkeypatch, properties
+    tmp_path,
+    monkeypatch,
+    properties,
 ):
     catalog = {
         "type": "FeatureCollection",
