@@ -63,6 +63,17 @@ def test_burned_area_hectares_rejects_shape_mismatch():
         )
 
 
+def test_burned_area_hectares_rejects_empty_mask():
+    burned = np.empty((0, 0), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="burned_mask must not be empty"):
+        burned_area_hectares(
+            burned,
+            transform=Affine(20.0, 0.0, 0.0, 0.0, -20.0, 0.0),
+            crs="EPSG:32637",
+        )
+
+
 @pytest.mark.parametrize(
     "bad_value, error",
     [

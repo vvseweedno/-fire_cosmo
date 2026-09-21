@@ -48,6 +48,8 @@ def _binary_mask(mask: np.ndarray, *, name: str) -> np.ndarray:
     array = np.asarray(mask)
     if array.ndim != 2:
         raise ValueError(f"{name} must be a 2D raster")
+    if array.size == 0:
+        raise ValueError(f"{name} must not be empty")
     if array.dtype == np.bool_:
         return array
     if not np.issubdtype(array.dtype, np.number):
