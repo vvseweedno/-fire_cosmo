@@ -29,6 +29,8 @@ jobs:
         run: python -m compileall -q wildfire app scripts inference.py train.py tests
       - name: Tests
         run: pytest
+      - name: Operational evidence gate
+        run: python scripts/validate_operational_catalog.py service/demo_results.geojson
       - name: API smoke
         run: |
           python - <<'PY'
