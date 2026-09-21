@@ -53,7 +53,8 @@ def test_api_spec_exposes_public_two_stage_contract():
     assert "Sentinel-2" in payload["public_task"]["stage_2"]
     assert payload["aoi_endpoint"] == "/api/aoi"
     assert payload["readiness_endpoint"] == "/api/readiness"
-    assert "working_score_formula" in payload
+    assert payload["organizer_scoring"]["status"] == "UNVERIFIED"
+    assert payload["organizer_scoring"]["formula"] is None
 
 
 def test_api_aoi_is_explicitly_unavailable_without_configuration(monkeypatch):
