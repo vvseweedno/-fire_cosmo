@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -23,12 +24,15 @@ def _validate_unique_feature_ids(features: list[dict[str, Any]]) -> None:
 
 def validate_catalog(path: str | Path) -> dict[str, Any]:
     """Parse a catalog and force all runtime, identity, summary, and evidence gates to execute."""
-    features = load_results(path)
+    catalog_path = Path(path)
+    features = load_results(catalog_path)
     _validate_unique_feature_ids(features)
     summary = analytical_summary(features)
+    digest = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
     return {
         "status": "VALID",
         "catalog": str(path),
+        "catalog_sha256": digest,
         "feature_count": len(features),
         "summary": summary,
     }
