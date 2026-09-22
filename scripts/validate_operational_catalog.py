@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +40,29 @@ def _validate_wgs84_bounds(features: list[dict[str, Any]]) -> None:
                 )
 
 
+def _validate_temporal_metadata(features: list[dict[str, Any]]) -> None:
+    """Reject malformed acquisition dates before they can break filtered API queries."""
+    for feature in features:
+        properties = feature["properties"]
+        for field in ("acquired_at", "date"):
+            raw = properties.get(field)
+            if raw is None:
+                continue
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(f"feature {feature['id']} has invalid {field}")
+            try:
+                datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"feature {feature['id']} has invalid {field}") from exc
+
+
 def validate_catalog(path: str | Path) -> dict[str, Any]:
     """Parse a catalog and force all runtime, identity, summary, and evidence gates to execute."""
     catalog_path = Path(path)
     features = load_results(catalog_path)
     _validate_unique_feature_ids(features)
     _validate_wgs84_bounds(features)
+    _validate_temporal_metadata(features)
     summary = analytical_summary(features)
     catalog_bytes = catalog_path.read_bytes()
     digest = hashlib.sha256(catalog_bytes).hexdigest()
