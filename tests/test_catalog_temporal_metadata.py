@@ -29,15 +29,26 @@ def test_operational_catalog_accepts_iso_temporal_metadata(tmp_path):
     assert report["status"] == "VALID"
 
 
+def test_operational_catalog_accepts_explicit_acquisition_offset(tmp_path):
+    report = validate_catalog(
+        _write_catalog(tmp_path, {"acquired_at": "2026-01-02T06:04:05+03:00"})
+    )
+    assert report["status"] == "VALID"
+
+
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("field", "value", "message"),
     (
-        ("acquired_at", "not-a-date"),
-        ("date", "2026-99-99"),
-        ("acquired_at", ""),
-        ("date", 20260922),
+        ("acquired_at", "not-a-date", "invalid acquired_at"),
+        ("date", "2026-99-99", "invalid date"),
+        ("acquired_at", "", "invalid acquired_at"),
+        ("date", 20260922, "invalid date"),
+        ("acquired_at", "2026-01-02T03:04:05", "ambiguous acquired_at without timezone"),
+        ("date", "2026-01-02T03:04:05Z", "date must be an ISO calendar date"),
     ),
 )
-def test_operational_catalog_rejects_malformed_temporal_metadata(tmp_path, field, value):
-    with pytest.raises(ValueError, match=rf"invalid {field}"):
+def test_operational_catalog_rejects_malformed_or_ambiguous_temporal_metadata(
+    tmp_path, field, value, message
+):
+    with pytest.raises(ValueError, match=message):
         validate_catalog(_write_catalog(tmp_path, {field: value}))
