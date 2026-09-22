@@ -36,6 +36,16 @@ def test_operational_catalog_accepts_explicit_acquisition_offset(tmp_path):
     assert report["status"] == "VALID"
 
 
+def test_operational_catalog_rejects_conflicting_acquisition_calendar_date(tmp_path):
+    with pytest.raises(ValueError, match="date disagrees with acquired_at calendar date"):
+        validate_catalog(
+            _write_catalog(
+                tmp_path,
+                {"acquired_at": "2026-01-02T23:59:59Z", "date": "2026-01-03"},
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
