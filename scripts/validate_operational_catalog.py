@@ -22,11 +22,29 @@ def _validate_unique_feature_ids(features: list[dict[str, Any]]) -> None:
         seen.add(feature_id)
 
 
+def _validate_wgs84_bounds(features: list[dict[str, Any]]) -> None:
+    """Reject impossible lon/lat values in GeoJSON operational output."""
+    for feature in features:
+        geometry = feature["geometry"]
+        positions = (
+            [geometry["coordinates"]]
+            if geometry["type"] == "Point"
+            else geometry["coordinates"][0]
+        )
+        for position in positions:
+            lon, lat = float(position[0]), float(position[1])
+            if not -180.0 <= lon <= 180.0 or not -90.0 <= lat <= 90.0:
+                raise ValueError(
+                    f"feature {feature['id']} has coordinates outside GeoJSON WGS84 bounds"
+                )
+
+
 def validate_catalog(path: str | Path) -> dict[str, Any]:
     """Parse a catalog and force all runtime, identity, summary, and evidence gates to execute."""
     catalog_path = Path(path)
     features = load_results(catalog_path)
     _validate_unique_feature_ids(features)
+    _validate_wgs84_bounds(features)
     summary = analytical_summary(features)
     catalog_bytes = catalog_path.read_bytes()
     digest = hashlib.sha256(catalog_bytes).hexdigest()
