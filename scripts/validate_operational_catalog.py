@@ -27,23 +27,18 @@ def _validate_wgs84_bounds(features: list[dict[str, Any]]) -> None:
     """Reject impossible lon/lat values in GeoJSON operational output."""
     for feature in features:
         geometry = feature["geometry"]
-        positions = (
-            [geometry["coordinates"]]
-            if geometry["type"] == "Point"
-            else geometry["coordinates"][0]
-        )
+        positions = ([geometry["coordinates"]] if geometry["type"] == "Point" else geometry["coordinates"][0])
         for position in positions:
             lon, lat = float(position[0]), float(position[1])
             if not -180.0 <= lon <= 180.0 or not -90.0 <= lat <= 90.0:
-                raise ValueError(
-                    f"feature {feature['id']} has coordinates outside GeoJSON WGS84 bounds"
-                )
+                raise ValueError(f"feature {feature['id']} has coordinates outside GeoJSON WGS84 bounds")
 
 
 def _validate_temporal_metadata(features: list[dict[str, Any]]) -> None:
-    """Reject malformed or ambiguous acquisition dates before publication."""
+    """Reject malformed, ambiguous, or internally conflicting acquisition dates."""
     for feature in features:
         properties = feature["properties"]
+        parsed_values: dict[str, datetime] = {}
         for field in ("acquired_at", "date"):
             raw = properties.get(field)
             if raw is None:
@@ -55,11 +50,13 @@ def _validate_temporal_metadata(features: list[dict[str, Any]]) -> None:
             except ValueError as exc:
                 raise ValueError(f"feature {feature['id']} has invalid {field}") from exc
             if field == "acquired_at" and parsed.tzinfo is None:
-                raise ValueError(
-                    f"feature {feature['id']} has ambiguous acquired_at without timezone"
-                )
+                raise ValueError(f"feature {feature['id']} has ambiguous acquired_at without timezone")
             if field == "date" and ("T" in raw or " " in raw):
                 raise ValueError(f"feature {feature['id']} date must be an ISO calendar date")
+            parsed_values[field] = parsed
+        if "acquired_at" in parsed_values and "date" in parsed_values:
+            if parsed_values["acquired_at"].date() != parsed_values["date"].date():
+                raise ValueError(f"feature {feature['id']} date disagrees with acquired_at calendar date")
 
 
 def validate_catalog(path: str | Path) -> dict[str, Any]:
@@ -84,9 +81,7 @@ def validate_catalog(path: str | Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Fail closed if an operational GeoJSON catalog violates service evidence gates."
-    )
+    parser = argparse.ArgumentParser(description="Fail closed if an operational GeoJSON catalog violates service evidence gates.")
     parser.add_argument("catalog", type=Path, help="GeoJSON FeatureCollection to validate")
     args = parser.parse_args()
 
