@@ -6,11 +6,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from wildfire.service import analytical_summary, load_results
+
+
+_CALENDAR_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _validate_unique_feature_ids(features: list[dict[str, Any]]) -> None:
@@ -45,14 +49,14 @@ def _validate_temporal_metadata(features: list[dict[str, Any]]) -> None:
                 continue
             if not isinstance(raw, str) or not raw.strip():
                 raise ValueError(f"feature {feature['id']} has invalid {field}")
+            if field == "date" and not _CALENDAR_DATE_RE.fullmatch(raw):
+                raise ValueError(f"feature {feature['id']} date must be an ISO calendar date (YYYY-MM-DD)")
             try:
                 parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             except ValueError as exc:
                 raise ValueError(f"feature {feature['id']} has invalid {field}") from exc
             if field == "acquired_at" and parsed.tzinfo is None:
                 raise ValueError(f"feature {feature['id']} has ambiguous acquired_at without timezone")
-            if field == "date" and ("T" in raw or " " in raw):
-                raise ValueError(f"feature {feature['id']} date must be an ISO calendar date")
             parsed_values[field] = parsed
         if "acquired_at" in parsed_values and "date" in parsed_values:
             if parsed_values["acquired_at"].date() != parsed_values["date"].date():
