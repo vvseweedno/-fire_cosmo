@@ -3,6 +3,7 @@ import json
 import pytest
 
 from scripts.validate_operational_catalog import validate_catalog
+from wildfire.service import load_results
 
 
 def _write_catalog(tmp_path, geometry):
@@ -35,19 +36,27 @@ def _write_catalog(tmp_path, geometry):
             "type": "Polygon",
             "coordinates": [[[37.0, 55.0], [37.0, 55.0], [37.0, 55.0], [37.0, 55.0]]],
         },
+        {
+            "type": "Polygon",
+            "coordinates": [[[37.0, 55.0], [38.0, 56.0], [39.0, 57.0], [37.0, 55.0]]],
+        },
     ],
 )
-def test_catalog_validator_rejects_malformed_geometry(tmp_path, geometry):
+def test_runtime_loader_and_catalog_validator_reject_malformed_geometry(tmp_path, geometry):
     path = _write_catalog(tmp_path, geometry)
 
+    with pytest.raises(ValueError):
+        load_results(path)
     with pytest.raises(ValueError):
         validate_catalog(path)
 
 
-def test_catalog_validator_accepts_finite_point_geometry(tmp_path):
+def test_runtime_loader_and_catalog_validator_accept_finite_point_geometry(tmp_path):
     path = _write_catalog(tmp_path, {"type": "Point", "coordinates": [37.0, 55.0]})
 
+    features = load_results(path)
     report = validate_catalog(path)
 
+    assert features[0]["geometry"]["coordinates"] == [37.0, 55.0]
     assert report["status"] == "VALID"
     assert report["feature_count"] == 1
