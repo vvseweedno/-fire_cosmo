@@ -120,3 +120,79 @@ def test_read_array_rejects_ambiguous_multiband_tiff(tmp_path: Path):
         assert "multiband GeoTIFF requires" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("ambiguous multiband raster must not silently use band 1")
+
+
+def test_geotiff_scale_and_offset_are_applied(tmp_path: Path):
+    path = tmp_path / "scaled.tif"
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="int16",
+        transform=from_origin(0, 2, 1, 1),
+    ) as dst:
+        dst.write(np.full((2, 2), 10, dtype=np.int16), 1)
+        dst.scales = [0.1]
+        dst.offsets = [2.0]
+
+    values = read_array(path)
+    assert np.allclose(values, 3.0)
+
+
+def test_official_role_based_layout_uses_filename_contract(tmp_path: Path):
+    shape = (2, 2)
+    _write_stack(
+        tmp_path / "AF_train_001_VIIRS_I1-I5.tif",
+        [np.full(shape, index, dtype=np.float32) for index in range(1, 6)],
+        [None] * 5,
+    )
+    _write_stack(
+        tmp_path / "BS_train_001_Sentinel-2_pre.tif",
+        [np.full(shape, 10 + index, dtype=np.float32) for index in range(2)],
+        [None] * 2,
+    )
+    _write_stack(
+        tmp_path / "BS_train_001_Sentinel-2_post.tif",
+        [np.full(shape, 20 + index, dtype=np.float32) for index in range(2)],
+        [None] * 2,
+    )
+    _write_stack(
+        tmp_path / "BS_train_001_Sentinel-1_pre.tif",
+        [np.full(shape, 30 + index, dtype=np.float32) for index in range(2)],
+        [None] * 2,
+    )
+    _write_stack(
+        tmp_path / "BS_train_001_Sentinel-1_post.tif",
+        [np.full(shape, 40 + index, dtype=np.float32) for index in range(2)],
+        [None] * 2,
+    )
+    _write_stack(
+        tmp_path / "BS_train_001_AUX.tif",
+        [np.full(shape, 50, dtype=np.float32)],
+        [None],
+    )
+    _write_stack(
+        tmp_path / "BS_train_001_mask.tif",
+        [np.zeros(shape, dtype=np.uint8)],
+        [None],
+    )
+
+    chips = {chip.chip_id: chip for chip in discover_chips(tmp_path)}
+    assert set(chips) == {"AF_train_001", "BS_train_001"}
+
+    af = load_channels(chips["AF_train_001"])
+    assert set(af) == {"I1", "I2", "I3", "I4", "I5"}
+    assert np.all(af["I4"] == 4)
+    assert np.all(af["I5"] == 5)
+
+    bs = load_channels(chips["BS_train_001"])
+    assert infer_task(bs) == "BS"
+    assert np.all(bs["B8A_PRE"] == 10)
+    assert np.all(bs["B12_PRE"] == 11)
+    assert np.all(bs["VV_POST"] == 40)
+    assert np.all(bs["VH_POST"] == 41)
+    assert np.all(bs["AUX"] == 50)
+    assert np.all(bs["TARGET"] == 0)

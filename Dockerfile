@@ -12,6 +12,7 @@ COPY wildfire ./wildfire
 COPY app ./app
 COPY scripts ./scripts
 COPY configs ./configs
+COPY service ./service
 COPY inference.py train.py ./
 
 RUN python -m pip install --upgrade pip \

@@ -30,6 +30,8 @@ from pathlib import Path
 import numpy as np
 
 from inference import run as run_inference
+from scripts.analyze_candidate_diversity import run as analyze_candidate_diversity
+from scripts.analyze_errors import run as analyze_errors
 from scripts.generate_af_candidate_oof import run as generate_af_candidate_oof
 from scripts.generate_baseline_oof import run as generate_baseline_oof
 from scripts.generate_bs_candidate_oof import run as generate_bs_candidate_oof
@@ -39,6 +41,15 @@ from scripts.preflight_dataset import run as preflight
 from wildfire.af_ensemble_validation import crossfit_af_candidate_ensemble
 from wildfire.bs_ensemble_validation import crossfit_bs_candidate_ensemble
 from wildfire.crossfit import crossfit_calibrate_and_evaluate
+from wildfire.dataset_evidence import dataset_fingerprint
+from wildfire.experiment_registry import (
+    ExperimentRecord,
+    peak_ram_mb,
+    resolve_git_commit_sha,
+    utc_timestamp,
+    write_experiment_record,
+)
+from wildfire.leakage import audit_leakage
 from wildfire.metadata import read_meta_csv
 from wildfire.model_config import load_model_config, save_model_config
 from wildfire.oof import load_oof_directory
@@ -78,7 +89,14 @@ def _validate_submission(data_dir: Path, submission: Path) -> dict[str, object]:
     template = read_submission_template(data_dir / "sample_submission.csv")
     meta = read_meta_csv(data_dir / "meta.csv")
     shapes = {chip_id: item.shape for chip_id, item in meta.items()}
-    errors = validate_submission_against_template(submission, template, shapes)
+    tasks = {chip_id: item.kind for chip_id, item in meta.items()}
+    errors = validate_submission_against_template(
+        submission,
+        template,
+        shapes,
+        tasks=tasks,
+        expected_row_count=447,
+    )
     if errors:
         raise RuntimeError("invalid submission: " + "; ".join(errors[:10]))
     return {
@@ -288,6 +306,48 @@ def _fit_once(
         bs_candidate_report,
     )
 
+    error_analysis: dict[str, object] = {}
+    diversity_analysis: dict[str, object] = {}
+    for task, promotion_key in (("AF", "af"), ("BS", "bs")):
+        task_root = run_dir / "crossfit_predictions" / task
+        baseline_dir = task_root / "baseline"
+        ensemble_dir = task_root / "ensemble"
+        baseline_errors = analyze_errors(
+            baseline_dir,
+            task=task,
+            meta_csv=train_dir / "meta.csv",
+            output=run_dir / "artifacts" / "error_analysis" / f"{task.lower()}_baseline.json",
+        )
+        selected_variant = "ensemble" if promotions[promotion_key] else "baseline"
+        if selected_variant == "baseline":
+            selected_errors = baseline_errors
+        else:
+            selected_errors = analyze_errors(
+                ensemble_dir,
+                task=task,
+                meta_csv=train_dir / "meta.csv",
+                output=(
+                    run_dir
+                    / "artifacts"
+                    / "error_analysis"
+                    / f"{task.lower()}_selected.json"
+                ),
+            )
+        error_analysis[task] = {
+            "selected_variant": selected_variant,
+            "baseline": baseline_errors,
+            "selected": selected_errors,
+        }
+        diversity_analysis[task] = analyze_candidate_diversity(
+            {"BASE": baseline_dir, "ENSEMBLE": ensemble_dir},
+            meta_csv=train_dir / "meta.csv",
+            output=(
+                run_dir
+                / "artifacts"
+                / f"candidate_diversity_{task.lower()}.json"
+            ),
+        )
+
     bs_config_path = run_dir / "bs_deployment_config.json"
     pooled_bs_report: dict[str, object] | None = None
     if promotions["bs"]:
@@ -337,6 +397,8 @@ def _fit_once(
         "bs_candidate_crossfit": bs_candidate_report,
         "pooled_af_ensemble": pooled_af_report,
         "pooled_bs_ensemble": pooled_bs_report,
+        "error_analysis": error_analysis,
+        "candidate_diversity": diversity_analysis,
     }
 
 
@@ -392,6 +454,8 @@ def run(
     test_root = Path(test_dir)
     root = Path(work_dir)
     root.mkdir(parents=True, exist_ok=True)
+    pipeline_started = time.perf_counter()
+    source_commit_sha = resolve_git_commit_sha()
 
     train_preflight = preflight(train_root, mode="train", deep=True)
     test_preflight = preflight(test_root, mode="test", deep=True)
@@ -399,6 +463,12 @@ def run(
     _write_json(root / "test_preflight.json", test_preflight)
     if not train_preflight["ok"] or not test_preflight["ok"]:
         raise RuntimeError("dataset preflight failed")
+
+    data_audit = {
+        "train": dataset_fingerprint(train_root),
+        "test": dataset_fingerprint(test_root),
+    }
+    _write_json(root / "artifacts" / "data_audit.json", data_audit)
 
     meta = read_meta_csv(train_root / "meta.csv")
     fold_manifest = root / f"folds_seed{seed}.json"
@@ -409,6 +479,13 @@ def run(
         require_event_groups=not allow_chip_fallback,
     )
     write_split_manifest(manifest, fold_manifest)
+
+    leakage_report = audit_leakage(train_root, manifest)
+    _write_json(root / "artifacts" / "leakage_audit.json", leakage_report)
+    if not allow_chip_fallback and not leakage_report["pass"]:
+        raise RuntimeError(
+            "strict leakage audit failed; inspect artifacts/leakage_audit.json"
+        )
 
     base_config_path = Path("configs/baseline.json")
     first = _fit_once(
@@ -496,6 +573,73 @@ def run(
     final_submission = root / "submission.csv"
     shutil.copyfile(Path(str(inference_runs[0]["path"])), final_submission)
 
+    combined_fingerprint = hashlib.sha256(
+        (
+            str(data_audit["train"]["manifest_sha256"])
+            + ":"
+            + str(data_audit["test"]["manifest_sha256"])
+        ).encode("utf-8")
+    ).hexdigest()
+    event_ids = sorted({str(item.split_group) for item in meta.values()})
+    experiment = ExperimentRecord(
+        experiment_id=f"final-{source_commit_sha[:12]}-seed{seed}",
+        timestamp=utc_timestamp(),
+        git_commit_sha=source_commit_sha,
+        dataset_fingerprint=combined_fingerprint,
+        task="COMBINED",
+        candidate_name="FINAL_COMPOSITE",
+        candidate_version="competition-max-accuracy-v2",
+        configuration={
+            "folds": folds,
+            "seed": seed,
+            "score_epsilon": score_epsilon,
+            "bootstrap_replicates": bootstrap_replicates,
+            "af_alpha_steps": af_alpha_steps,
+            "bs_max_candidates": bs_max_candidates,
+            "bs_passes": bs_passes,
+            "bs_landcover_passes": bs_landcover_passes,
+            "alpha_steps": alpha_steps,
+            "ensemble_threshold_candidates": ensemble_threshold_candidates,
+            "ensemble_threshold_passes": ensemble_threshold_passes,
+            "promotions": first["promotions"],
+            "score_contract_status": "configured_competition_objective",
+            "crossfit_event_policy": "rotating holdout; see fold manifest",
+        },
+        seed=seed,
+        fold_manifest_sha256=_sha256(fold_manifest),
+        train_events=event_ids,
+        holdout_events=[],
+        per_fold_metrics={
+            "baseline": first["baseline_crossfit"],
+            "af_candidate": first["af_candidate_crossfit"],
+            "bs_candidate": first["bs_candidate_crossfit"],
+        },
+        aggregate_metrics={
+            key: float(first["metrics"][key]) for key in METRIC_KEYS
+        },
+        official_score=float(first["metrics"]["score"]),
+        reference_score=float(first["baseline_metrics"]["score"]),
+        delta_score=float(first["delta_score"]),
+        runtime_seconds=time.perf_counter() - pipeline_started,
+        peak_ram_mb=peak_ram_mb(),
+        gpu_info={
+            "status": "NOT_PROBED",
+            "note": "No GPU dependency is required by the current finalizer.",
+        },
+        bootstrap_result=bootstrap,
+        state="CANDIDATE",
+        promoted=bool(any(first["promotions"].values())),
+        promotion_reason=(
+            "Cross-fit score gain, paired event bootstrap, reproducibility and "
+            "submission gates passed; exact-source CI is still pending."
+        ),
+        rejected_reason=None,
+    )
+    experiment_path = write_experiment_record(
+        root / "artifacts" / "experiments",
+        experiment,
+    )
+
     freeze = {
         "status": "frozen_candidate",
         "proof_status": "PENDING_CI",
@@ -516,7 +660,11 @@ def run(
                 inference_runs[0]["sha256"] == inference_runs[1]["sha256"]
             ),
         },
-        "leakage_audit": manifest.get("leakage_audit"),
+        "leakage_audit": leakage_report,
+        "dataset_fingerprint": {
+            "train": data_audit["train"]["manifest_sha256"],
+            "test": data_audit["test"]["manifest_sha256"],
+        },
         "artifacts": {
             "model_config": str(final_config),
             "model_config_sha256": _sha256(final_config),
@@ -524,6 +672,8 @@ def run(
             "submission_sha256": _sha256(final_submission),
             "fold_manifest": str(fold_manifest),
             "fold_manifest_sha256": _sha256(fold_manifest),
+            "leakage_audit": str(root / "artifacts" / "leakage_audit.json"),
+            "experiment_record": str(experiment_path),
         },
         "inference_runs": inference_runs,
     }
@@ -532,14 +682,24 @@ def run(
 
     evidence = {
         "ci": {
-            "green": False,
-            "note": "Set from the actual GitHub Actions result before PROVEN verification.",
+            "source_commit_sha": source_commit_sha,
+            "workflow_run_id": None,
+            "workflow_sha": None,
+            "workflow_conclusion": None,
+            "note": (
+                "Attach the actual GitHub Actions run id/SHA/conclusion with "
+                "verify_proven_release.py before PROVEN verification."
+            ),
         },
         "preflight": {
             "train": train_preflight,
             "test": test_preflight,
         },
-        "leakage_audit": manifest.get("leakage_audit"),
+        "leakage_audit": leakage_report,
+        "dataset_fingerprint": {
+            "train": data_audit["train"]["manifest_sha256"],
+            "test": data_audit["test"]["manifest_sha256"],
+        },
         "crossfit": {
             "baseline": first["baseline_metrics"],
             "final": first["metrics"],
@@ -556,6 +716,7 @@ def run(
             "run_1": inference_runs[0],
             "run_2": inference_runs[1],
         },
+        "experiment_record": str(experiment_path),
     }
     evidence_path = root / "artifacts" / "release_evidence.json"
     _write_json(evidence_path, evidence)
@@ -572,8 +733,12 @@ def run(
         "final_model_config": str(final_config),
         "freeze_manifest": str(freeze_path),
         "release_evidence": str(evidence_path),
+        "experiment_record": str(experiment_path),
+        "source_commit_sha": source_commit_sha,
         "reproducibility": freeze["reproducibility"],
         "leakage_audit": freeze["leakage_audit"],
+        "dataset_fingerprint": freeze["dataset_fingerprint"],
+        "data_audit": str(root / "artifacts" / "data_audit.json"),
         "inference_runs": inference_runs,
     }
 

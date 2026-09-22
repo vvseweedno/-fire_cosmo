@@ -35,6 +35,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "B5_PRE": ("b5_pre", "pre_b5"),
     "B6_PRE": ("b6_pre", "pre_b6"),
     "B7_PRE": ("b7_pre", "pre_b7"),
+    "B8_PRE": ("b8_pre", "pre_b8"),
     "B8A_PRE": ("b8a_pre", "pre_b8a"),
     "B11_PRE": ("b11_pre", "pre_b11"),
     "B12_PRE": ("b12_pre", "pre_b12"),
@@ -46,6 +47,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "B5_POST": ("b5_post", "post_b5"),
     "B6_POST": ("b6_post", "post_b6"),
     "B7_POST": ("b7_post", "post_b7"),
+    "B8_POST": ("b8_post", "post_b8"),
     "B8A_POST": ("b8a_post", "post_b8a"),
     "B11_POST": ("b11_post", "post_b11"),
     "B12_POST": ("b12_post", "post_b12"),
@@ -61,6 +63,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "SLOPE": ("slope",),
     "ASPECT": ("aspect",),
     "VALID_MASK": ("valid_mask", "valid", "mask_valid"),
+    "AUX": ("aux", "auxiliary"),
     # AF observation geometry and ERA5-Land context.
     "SUN_ZENITH": ("sun_zenith", "solar_zenith", "sza"),
     "SUN_AZIMUTH": ("sun_azimuth", "solar_azimuth", "saa"),
@@ -71,11 +74,28 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "WIND_U10": ("wind_u10", "u10"),
     "WIND_V10": ("wind_v10", "v10"),
     "WIND_SPEED": ("wind_speed",),
+    # Optional aligned temporal recurrence prior for persistent non-wildfire heat.
+    "PERSISTENT_HEAT_PRIOR": (
+        "persistent_heat_prior",
+        "static_heat_prior",
+        "thermal_recurrence",
+    ),
     "TARGET": ("target", "label", "mask", "y"),
 }
 
 SUPPORTED_SUFFIXES = (".npy", ".npz", ".tif", ".tiff")
 _STACK_SUFFIXES = ("features", "feature", "image", "stack", "input", "data")
+
+# The official archive identifies a raster by its role, while some official
+# stacks do not carry GDAL band descriptions.  These are the documented
+# physical channel orders for those role-based stacks.  Ambiguous stacks still
+# require descriptions or a sidecar and are rejected rather than guessed.
+_OFFICIAL_S2_BASE = ("B2", "B3", "B4", "B5", "B6", "B7", "B8A", "B11", "B12")
+_OFFICIAL_S2_WITH_B8 = ("B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12")
+
+
+def _phase_channels(names: tuple[str, ...], phase: str) -> tuple[str, ...]:
+    return tuple(f"{name}_{phase.upper()}" for name in names)
 
 
 @dataclass(frozen=True)
@@ -248,6 +268,129 @@ def _embedded_sources(path: Path) -> dict[str, ChannelSource]:
     return {}
 
 
+def _official_role(path: Path) -> tuple[str, tuple[str, ...]] | None:
+    """Resolve an official role-based filename into a chip id and channels.
+
+    The role is part of the filename contract, so this path is intentionally
+    independent of TIFF descriptions.  The channel order is only fixed for
+    the layouts documented by the competition contract; otherwise the normal
+    description/sidecar loader remains authoritative.
+    """
+
+    stem = path.stem
+    af_match = re.fullmatch(r"(?P<chip>AF_.+)_VIIRS_I1-I5", stem, flags=re.IGNORECASE)
+    if af_match:
+        return af_match.group("chip"), ("I1", "I2", "I3", "I4", "I5")
+
+    aux_match = re.fullmatch(r"(?P<chip>(?:AF|BS)_.+)_AUX", stem, flags=re.IGNORECASE)
+    if aux_match:
+        return aux_match.group("chip"), ("AUX",)
+
+    target_match = re.fullmatch(
+        r"(?P<chip>(?:AF|BS)_.+)_(?:mask|target|label)",
+        stem,
+        flags=re.IGNORECASE,
+    )
+    if target_match:
+        return target_match.group("chip"), ("TARGET",)
+
+    s2_match = re.fullmatch(
+        r"(?P<chip>BS_.+)_Sentinel[-_]2_(?P<phase>pre|post)",
+        stem,
+        flags=re.IGNORECASE,
+    )
+    if s2_match:
+        phase = s2_match.group("phase").lower()
+        return s2_match.group("chip"), _phase_channels(_OFFICIAL_S2_BASE, phase)
+
+    s1_match = re.fullmatch(
+        r"(?P<chip>BS_.+)_Sentinel[-_]1_(?P<phase>pre|post)",
+        stem,
+        flags=re.IGNORECASE,
+    )
+    if s1_match:
+        phase = s1_match.group("phase").lower()
+        return s1_match.group("chip"), (f"VV_{phase.upper()}", f"VH_{phase.upper()}")
+
+    return None
+
+
+def _official_role_sources(path: Path) -> tuple[str, dict[str, ChannelSource]] | None:
+    """Build sources for one role-based official raster.
+
+    Sentinel-2 supports the full nine-band baseline stack, the ten-band stack
+    with B8, and the compact B8A/B12 fixture used by the public contract tests.
+    Any other unlabelled stack is rejected as ambiguous.  An auxiliary role is
+    accepted as a single raster; a multi-band auxiliary file must provide the
+    usual descriptions or sidecar mapping.
+    """
+
+    resolved = _official_role(path)
+    if resolved is None:
+        return None
+    chip_id, expected_channels = resolved
+
+    if expected_channels == ("TARGET",):
+        if path.suffix.lower() in {".tif", ".tiff"}:
+            if rasterio is None:
+                raise RuntimeError("rasterio is required for official target GeoTIFF input")
+            with rasterio.open(path) as src:
+                if src.count != 1:
+                    raise ValueError(f"{path}: target raster must contain exactly one band")
+            return chip_id, {"TARGET": ChannelSource(path=path, band=1)}
+        if path.suffix.lower() in {".npy", ".npz"}:
+            return chip_id, {"TARGET": ChannelSource(path=path)}
+        raise ValueError(f"{path}: unsupported official target format")
+
+    if path.suffix.lower() not in {".tif", ".tiff"}:
+        raise ValueError(f"{path}: official role-based files must be GeoTIFF")
+    if rasterio is None:
+        raise RuntimeError("rasterio is required for official role-based GeoTIFF input")
+
+    with rasterio.open(path) as src:
+        count = src.count
+
+    channel_names = expected_channels
+    if expected_channels and expected_channels[0] in {"B2_PRE", "B2_POST"}:
+        phase = expected_channels[0].rsplit("_", 1)[1]
+        if count == 2:
+            channel_names = _phase_channels(("B8A", "B12"), phase.lower())
+        elif count == len(_OFFICIAL_S2_WITH_B8):
+            channel_names = _phase_channels(_OFFICIAL_S2_WITH_B8, phase.lower())
+        elif count == len(_OFFICIAL_S2_BASE):
+            channel_names = _phase_channels(_OFFICIAL_S2_BASE, phase.lower())
+        elif count == len(_OFFICIAL_S2_WITH_B8) + 1:
+            channel_names = (*_phase_channels(_OFFICIAL_S2_WITH_B8, phase.lower()), f"SCL_{phase.upper()}")
+        else:
+            raise ValueError(
+                f"{path}: unsupported unlabelled Sentinel-2 stack with {count} bands; "
+                "expected 2, 9, 10 or 11 bands or use an explicit sidecar"
+            )
+    elif expected_channels == ("VV_PRE", "VH_PRE") or expected_channels == (
+        "VV_POST",
+        "VH_POST",
+    ):
+        if count != 2:
+            raise ValueError(f"{path}: Sentinel-1 role stack must contain exactly VV and VH")
+    elif expected_channels == ("AUX",):
+        if count != 1:
+            described = _tiff_sources(path)
+            if not described:
+                raise ValueError(
+                    f"{path}: multi-band AUX raster needs band descriptions or an explicit sidecar"
+                )
+            return chip_id, described
+    elif count != len(expected_channels):
+        raise ValueError(
+            f"{path}: role expects {len(expected_channels)} bands, found {count}"
+        )
+
+    return chip_id, {
+        name: ChannelSource(path=path, band=index)
+        for index, name in enumerate(channel_names, start=1)
+    }
+
+
 def discover_chips(data_dir: str | Path) -> list[Chip]:
     """Discover chips without silently guessing multiband channel order.
 
@@ -265,6 +408,13 @@ def discover_chips(data_dir: str | Path) -> list[Chip]:
 
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            continue
+
+        official = _official_role_sources(path)
+        if official is not None:
+            chip_id, sources = official
+            identity = (path.parent, chip_id)
+            by_identity.setdefault(identity, {}).update(sources)
             continue
 
         embedded = _embedded_sources(path)
@@ -325,7 +475,7 @@ def read_array(path: Path) -> np.ndarray:
                     f"{path}: multiband GeoTIFF requires band descriptions/tags "
                     "or an explicit sidecar mapping"
                 )
-            return src.read(1)
+        return _read_source(ChannelSource(path=path, band=1))
     raise ValueError(f"Unsupported raster format: {path}")
 
 
@@ -360,7 +510,16 @@ def _read_source(source: ChannelSource) -> np.ndarray:
                 raise ValueError(
                     f"{source.path}: band index {band} outside 1..{src.count}"
                 )
-            return src.read(band)
+            array = src.read(band)
+            scale = float(src.scales[band - 1]) if src.scales else 1.0
+            offset = float(src.offsets[band - 1]) if src.offsets else 0.0
+            if not (np.isfinite(scale) and np.isfinite(offset)):
+                raise ValueError(
+                    f"{source.path}: non-finite raster scale/offset for band {band}"
+                )
+            if scale != 1.0 or offset != 0.0:
+                array = np.asarray(array, dtype=np.float32) * scale + offset
+            return array
 
     raise ValueError(f"Unsupported raster format: {source.path}")
 

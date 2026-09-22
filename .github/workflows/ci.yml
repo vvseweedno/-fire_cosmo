@@ -6,6 +6,7 @@ on:
       - ready-prototype
       - ready-prototype-final-v2
       - competition-final-proven
+      - competition-max-accuracy-v2
   pull_request:
 
 jobs:
@@ -28,6 +29,8 @@ jobs:
         run: python -m compileall -q wildfire app scripts inference.py train.py tests
       - name: Tests
         run: pytest
+      - name: Operational evidence gate
+        run: python scripts/validate_operational_catalog.py service/demo_results.geojson
       - name: API smoke
         run: |
           python - <<'PY'
@@ -36,6 +39,9 @@ jobs:
           client = TestClient(app)
           assert client.get("/health").json()["status"] == "ok"
           assert client.get("/api/spec").status_code == 200
+          assert client.get("/api/summary").json()["total_burn_area_ha"] > 0
+          assert client.get("/api/export/geojson").status_code == 200
+          assert client.get("/map").status_code == 200
           PY
       - name: Docker build
         run: docker build -t ready-prototype:ci .
