@@ -41,7 +41,7 @@ def _validate_wgs84_bounds(features: list[dict[str, Any]]) -> None:
 
 
 def _validate_temporal_metadata(features: list[dict[str, Any]]) -> None:
-    """Reject malformed acquisition dates before they can break filtered API queries."""
+    """Reject malformed or ambiguous acquisition dates before publication."""
     for feature in features:
         properties = feature["properties"]
         for field in ("acquired_at", "date"):
@@ -51,9 +51,15 @@ def _validate_temporal_metadata(features: list[dict[str, Any]]) -> None:
             if not isinstance(raw, str) or not raw.strip():
                 raise ValueError(f"feature {feature['id']} has invalid {field}")
             try:
-                datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             except ValueError as exc:
                 raise ValueError(f"feature {feature['id']} has invalid {field}") from exc
+            if field == "acquired_at" and parsed.tzinfo is None:
+                raise ValueError(
+                    f"feature {feature['id']} has ambiguous acquired_at without timezone"
+                )
+            if field == "date" and ("T" in raw or " " in raw):
+                raise ValueError(f"feature {feature['id']} date must be an ISO calendar date")
 
 
 def validate_catalog(path: str | Path) -> dict[str, Any]:
