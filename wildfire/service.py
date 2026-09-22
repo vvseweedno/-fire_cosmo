@@ -16,6 +16,44 @@ def results_path() -> Path:
     return Path(os.getenv("WILDFIRE_RESULTS_GEOJSON", str(DEFAULT_RESULTS_PATH)))
 
 
+def _coordinate_pair(value: Any, *, feature_id: str) -> tuple[float, float]:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        raise ValueError(f"feature {feature_id} has malformed coordinates")
+    try:
+        x, y = float(value[0]), float(value[1])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"feature {feature_id} has non-numeric coordinates") from exc
+    if not math.isfinite(x) or not math.isfinite(y):
+        raise ValueError(f"feature {feature_id} has non-finite coordinates")
+    return x, y
+
+
+def validate_feature_geometry(feature: dict[str, Any]) -> None:
+    """Fail closed on malformed supported GeoJSON geometries at catalog ingestion."""
+    feature_id = str(feature.get("id", "unknown"))
+    geometry = feature["geometry"]
+    coordinates = geometry.get("coordinates")
+    if geometry["type"] == "Point":
+        _coordinate_pair(coordinates, feature_id=feature_id)
+        return
+    if not isinstance(coordinates, list) or not coordinates or not isinstance(coordinates[0], list):
+        raise ValueError(f"feature {feature_id} has malformed Polygon coordinates")
+    ring = coordinates[0]
+    if len(ring) < 4:
+        raise ValueError(f"feature {feature_id} Polygon ring must contain at least four positions")
+    points = [_coordinate_pair(point, feature_id=feature_id) for point in ring]
+    if points[0] != points[-1]:
+        raise ValueError(f"feature {feature_id} Polygon ring is not closed")
+    if len(set(points[:-1])) < 3:
+        raise ValueError(f"feature {feature_id} Polygon ring has fewer than three distinct vertices")
+    twice_area = sum(
+        left[0] * right[1] - right[0] * left[1]
+        for left, right in zip(points, points[1:])
+    )
+    if math.isclose(twice_area, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError(f"feature {feature_id} Polygon ring must have non-zero area")
+
+
 def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
     source = Path(path) if path is not None else results_path()
     payload = json.loads(source.read_text(encoding="utf-8"))
@@ -35,7 +73,9 @@ def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
         if not isinstance(properties, dict):
             raise ValueError(f"results feature {index} properties must be an object")
         feature_id = str(feature.get("id") or f"feature-{index}")
-        features.append({"type": "Feature", "id": feature_id, "geometry": geometry, "properties": properties})
+        normalized = {"type": "Feature", "id": feature_id, "geometry": geometry, "properties": properties}
+        validate_feature_geometry(normalized)
+        features.append(normalized)
     return features
 
 
