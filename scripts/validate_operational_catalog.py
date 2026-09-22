@@ -28,12 +28,15 @@ def validate_catalog(path: str | Path) -> dict[str, Any]:
     features = load_results(catalog_path)
     _validate_unique_feature_ids(features)
     summary = analytical_summary(features)
-    digest = hashlib.sha256(catalog_path.read_bytes()).hexdigest()
+    catalog_bytes = catalog_path.read_bytes()
+    digest = hashlib.sha256(catalog_bytes).hexdigest()
     return {
         "status": "VALID",
         "catalog": str(path),
         "catalog_sha256": digest,
+        "catalog_size_bytes": len(catalog_bytes),
         "feature_count": len(features),
+        "feature_ids": [str(feature["id"]) for feature in features],
         "summary": summary,
     }
 
