@@ -76,6 +76,24 @@ def test_summary_rejects_invalid_pixel_geometry_metadata(
     assert "invalid" in response.json()["detail"]
 
 
+def test_summary_rejects_duplicate_feature_ids_at_runtime(tmp_path, monkeypatch):
+    feature = {
+        "type": "Feature",
+        "id": "duplicate-event",
+        "geometry": {"type": "Point", "coordinates": [37.6, 55.75]},
+        "properties": {"kind": "active_fire"},
+    }
+    catalog = {"type": "FeatureCollection", "features": [feature, feature]}
+    path = tmp_path / "duplicate-results.geojson"
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+    monkeypatch.setenv("WILDFIRE_RESULTS_GEOJSON", str(path))
+
+    response = client.get("/api/summary")
+
+    assert response.status_code == 400
+    assert "duplicate feature id" in response.json()["detail"]
+
+
 def test_spatial_temporal_query_filters_demo_features():
     response = client.get(
         "/api/query",
