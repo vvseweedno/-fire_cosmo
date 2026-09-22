@@ -55,6 +55,8 @@ def test_operational_catalog_rejects_conflicting_acquisition_calendar_date(tmp_p
         ("date", 20260922, "invalid date"),
         ("acquired_at", "2026-01-02T03:04:05", "ambiguous acquired_at without timezone"),
         ("date", "2026-01-02T03:04:05Z", "date must be an ISO calendar date"),
+        ("date", "2026-W01-5", "date must be an ISO calendar date"),
+        ("date", "20260102", "date must be an ISO calendar date"),
     ),
 )
 def test_operational_catalog_rejects_malformed_or_ambiguous_temporal_metadata(
