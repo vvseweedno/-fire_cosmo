@@ -63,6 +63,7 @@ def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
     if not isinstance(raw_features, list):
         raise ValueError("results catalog features must be a list")
     features: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for index, feature in enumerate(raw_features):
         if not isinstance(feature, dict) or feature.get("type") != "Feature":
             raise ValueError(f"results feature {index} must be a GeoJSON Feature")
@@ -73,6 +74,9 @@ def load_results(path: str | Path | None = None) -> list[dict[str, Any]]:
         if not isinstance(properties, dict):
             raise ValueError(f"results feature {index} properties must be an object")
         feature_id = str(feature.get("id") or f"feature-{index}")
+        if feature_id in seen_ids:
+            raise ValueError(f"results catalog contains duplicate feature id: {feature_id}")
+        seen_ids.add(feature_id)
         normalized = {"type": "Feature", "id": feature_id, "geometry": geometry, "properties": properties}
         validate_feature_geometry(normalized)
         features.append(normalized)
